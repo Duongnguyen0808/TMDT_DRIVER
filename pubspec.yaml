@@ -41,6 +41,11 @@ dependencies:
   url_launcher: ^6.3.0
   vietmap_flutter_gl: ^4.1.0
   vietmap_flutter_plugin: ^0.5.2
+  image_picker: ^1.1.2
+  webview_flutter: ^4.4.2
+  jwt_decode: ^0.3.1
+  geolocator: ^10.1.0
+  intl: ^0.19.0
 
 dev_dependencies:
   flutter_test:

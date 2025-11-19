@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../utils/currency.dart';
 
 class OrderCard extends StatelessWidget {
   const OrderCard({super.key, required this.order, this.onTap});
@@ -17,6 +18,7 @@ class OrderCard extends StatelessWidget {
     final addr = (order['deliveryAddress']?['addressLine1'] ?? '').toString();
     final double grandTotal =
         double.tryParse(order['grandTotal']?.toString() ?? '0') ?? 0;
+    final logisticStatus = (order['logisticStatus'] ?? '').toString();
 
     return InkWell(
       onTap: onTap,
@@ -55,13 +57,19 @@ class OrderCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Fix overflow: wrap chip into Flexible and allow layout to adapt
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        'Đơn #$shortId',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      Expanded(
+                        child: Text(
+                          'Đơn #$shortId',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
+                      const SizedBox(width: 8),
                       _StatusChip(
                         status: status,
                         label: _statusLabel(status),
@@ -69,6 +77,9 @@ class OrderCard extends StatelessWidget {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 4),
+                  if (logisticStatus.isNotEmpty)
+                    _LogisticChip(status: logisticStatus),
                   const SizedBox(height: 4),
                   if (storeTitle.isNotEmpty)
                     Text(
@@ -84,7 +95,7 @@ class OrderCard extends StatelessWidget {
                     ),
                   const SizedBox(height: 6),
                   Text(
-                    'Tổng: ${grandTotal.toStringAsFixed(0)}đ',
+                    'Tổng: ${formatVND(grandTotal)}',
                     style: const TextStyle(fontWeight: FontWeight.w500),
                   ),
                 ],
@@ -96,6 +107,8 @@ class OrderCard extends StatelessWidget {
       ),
     );
   }
+
+  // Removed local formatter; using shared formatVND
 
   Color _statusColor(String s) {
     switch (s) {
@@ -173,20 +186,23 @@ class _StatusChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: color.withOpacity(.4)),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(_miniIcon(), size: 14, color: color),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.w600,
-              fontSize: 12,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(_miniIcon(), size: 14, color: color),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -206,5 +222,89 @@ class _StatusChip extends StatelessWidget {
       default:
         return Icons.help_outline;
     }
+  }
+}
+
+class _LogisticChip extends StatelessWidget {
+  const _LogisticChip({required this.status});
+  final String status;
+
+  Color _color() {
+    switch (status) {
+      case 'SellerPending':
+        return Colors.brown;
+      case 'ToOriginHub':
+        return Colors.orange;
+      case 'AtOriginHub':
+        return Colors.deepOrange;
+      case 'ToLocalHub':
+        return Colors.teal;
+      case 'AtLocalHub':
+        return Colors.blueAccent;
+      case 'PickedUp':
+        return Colors.indigo;
+      case 'Delivering':
+        return Colors.purple;
+      case 'Delivered':
+        return Colors.green;
+      case 'Cancelled':
+        return Colors.grey;
+      default:
+        return Colors.blueGrey;
+    }
+  }
+
+  String _label() {
+    switch (status) {
+      case 'SellerPending':
+        return 'Chờ shop';
+      case 'ToOriginHub':
+        return 'Đến kho tổng';
+      case 'AtOriginHub':
+        return 'Ở kho tổng';
+      case 'ToLocalHub':
+        return 'Đến kho địa phương';
+      case 'AtLocalHub':
+        return 'Ở kho địa phương';
+      case 'PickedUp':
+        return 'Đã lấy';
+      case 'Delivering':
+        return 'Đang giao';
+      case 'Delivered':
+        return 'Hoàn tất';
+      case 'Cancelled':
+        return 'Hủy';
+      default:
+        return status;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = _color();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: c.withOpacity(.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: c.withOpacity(.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.local_shipping, size: 14, color: c),
+          const SizedBox(width: 4),
+          Text(
+            _label(),
+            style: TextStyle(
+              color: c,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
 import 'views/login_page.dart';
 import 'views/orders/orders_page.dart';
+import 'package:jwt_decode/jwt_decode.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,14 +19,27 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final box = GetStorage();
     final token = box.read('token');
+    Widget home = const LoginPage();
+    if (token is String && token.isNotEmpty) {
+      try {
+        final decoded = Jwt.parseJwt(token);
+        final userType = decoded['userType'];
+        if (userType == 'Driver') {
+          home = const OrdersPage();
+        } else {
+          // Not a driver yet -> force login flow
+          home = const LoginPage();
+        }
+      } catch (_) {
+        home = const LoginPage();
+      }
+    }
     return GetMaterialApp(
       title: 'TMDT Shipper',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
-      home: token != null && token.toString().isNotEmpty
-          ? const OrdersPage()
-          : const LoginPage(),
+      home: home,
     );
   }
 }

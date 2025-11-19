@@ -4,6 +4,7 @@ import 'package:get_storage/get_storage.dart';
 import '../controllers/auth_controller.dart';
 import 'orders/orders_page.dart';
 import 'widgets/shipper_appbar.dart';
+import 'registration/shipper_registration_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -31,6 +32,15 @@ class _LoginPageState extends State<LoginPage> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
+            // Quick access to shipper registration without login
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => Get.to(() => const ShipperRegistrationPage()),
+                icon: const Icon(Icons.motorcycle),
+                label: const Text('Đăng ký Shipper'),
+              ),
+            ),
             TextField(
               controller: emailCtrl,
               decoration: const InputDecoration(labelText: 'Email'),
@@ -62,9 +72,11 @@ class _LoginPageState extends State<LoginPage> {
                     : const Text('Đăng nhập'),
               ),
             ),
+            const SizedBox(height: 12),
           ],
         ),
       ),
+      // Removed bottom nag requiring prior login; registration open publicly.
     );
   }
 }

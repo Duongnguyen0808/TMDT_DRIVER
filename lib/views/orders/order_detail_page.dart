@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../utils/currency.dart';
 import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../controllers/orders_controller.dart';
@@ -35,6 +36,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     final ctrl = Get.find<DriverOrdersController>();
     final order = widget.order;
     final status = (order['orderStatus'] ?? '').toString();
+    final logisticStatus = (order['logisticStatus'] ?? '').toString();
     final addr = (order['deliveryAddress']?['addressLine1'] ?? '').toString();
     final storeTitle = (order['storeId']?['title'] ?? '').toString();
     final orderTotal =
@@ -68,14 +70,18 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
             Text('Mã: ${order['_id']}'),
             const SizedBox(height: 8),
             Text('Trạng thái: $status'),
+            if (logisticStatus.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              _LogisticChip(status: logisticStatus),
+            ],
             const SizedBox(height: 8),
             Text('Cửa hàng: $storeTitle'),
             const SizedBox(height: 8),
             Text('Địa chỉ giao: $addr'),
             const SizedBox(height: 8),
-            Text('Tạm tính: ${orderTotal.toStringAsFixed(0)}đ'),
-            Text('Phí giao: ${deliveryFee.toStringAsFixed(0)}đ'),
-            Text('Tổng: ${grandTotal.toStringAsFixed(0)}đ'),
+            Text('Tạm tính: ${formatVND(orderTotal)}'),
+            Text('Phí giao: ${formatVND(deliveryFee)}'),
+            Text('Tổng: ${formatVND(grandTotal)}'),
             const SizedBox(height: 12),
             if (destLat != null && destLng != null) ...[
               Row(
@@ -189,134 +195,44 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
               label: const Text('Mở bản đồ ngoài'),
             ),
             const Spacer(),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: status == 'Preparing' && !_updating
-                        ? () async {
-                            setState(() => _updating = true);
-                            final ok = await ctrl.updateOrderStatus(
-                              order['_id'].toString(),
-                              'Delivering',
-                            );
-                            setState(() => _updating = false);
-                            if (ok) {
-                              Get.snackbar(
-                                'Thành công',
-                                'Đã chuyển sang trạng thái Đang vận chuyển',
-                                snackPosition: SnackPosition.BOTTOM,
+            // Action buttons adapt to new flow:
+            // - Available & claim now handled in list
+            // - Delivering -> mark delivered
+            // - Preparing state no direct driver start; occurs via claim
+            if (status == 'Delivering') ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: !_updating
+                          ? () async {
+                              setState(() => _updating = true);
+                              final ok = await ctrl.markDelivered(
+                                order['_id'].toString(),
                               );
-                              Get.back();
-                              ctrl.fetchMyOrders();
+                              setState(() => _updating = false);
+                              if (ok) {
+                                Get.snackbar(
+                                  'Hoàn tất',
+                                  'Đơn đã giao thành công',
+                                  snackPosition: SnackPosition.BOTTOM,
+                                );
+                                Get.back();
+                              }
                             }
-                          }
-                        : null,
-                    child: _updating && status == 'Preparing'
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Bắt đầu giao'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.redAccent,
+                          : null,
+                      child: _updating
+                          ? const SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Đã giao (Hoàn tất)'),
                     ),
-                    onPressed: status == 'Preparing' && !_updating
-                        ? () async {
-                            final confirm = await showDialog<bool>(
-                              context: context,
-                              builder: (ctx) => AlertDialog(
-                                title: const Text('Từ chối đơn'),
-                                content: const Text(
-                                  'Bạn chắc chắn muốn từ chối đơn này?',
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(ctx, false),
-                                    child: const Text('Hủy'),
-                                  ),
-                                  ElevatedButton(
-                                    onPressed: () => Navigator.pop(ctx, true),
-                                    child: const Text('Từ chối'),
-                                  ),
-                                ],
-                              ),
-                            );
-                            if (confirm != true) return;
-                            setState(() => _updating = true);
-                            final ok = await ctrl.updateOrderStatus(
-                              order['_id'].toString(),
-                              'Rejected',
-                            );
-                            setState(() => _updating = false);
-                            if (ok) {
-                              Get.snackbar(
-                                'Đã từ chối',
-                                'Bạn đã từ chối đơn',
-                                snackPosition: SnackPosition.BOTTOM,
-                                backgroundColor: Colors.redAccent,
-                                colorText: Colors.white,
-                              );
-                              Get.back();
-                              ctrl.fetchMyOrders();
-                            }
-                          }
-                        : null,
-                    child: _updating && status == 'Preparing'
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Text('Từ chối'),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: status == 'Delivering' && !_updating
-                        ? () async {
-                            setState(() => _updating = true);
-                            final ok = await ctrl.updateOrderStatus(
-                              order['_id'].toString(),
-                              'Delivered',
-                            );
-                            setState(() => _updating = false);
-                            if (ok) {
-                              Get.snackbar(
-                                'Thành công',
-                                'Đơn đã giao thành công',
-                                snackPosition: SnackPosition.BOTTOM,
-                              );
-                              Get.back();
-                              ctrl.fetchMyOrders();
-                            }
-                          }
-                        : null,
-                    child: _updating && status == 'Delivering'
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Đã giao (Hoàn tất)'),
-                  ),
-                ),
-              ],
-            ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -477,6 +393,91 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
           ),
         );
       },
+    );
+  }
+}
+
+// Removed local formatter; using formatVND
+
+class _LogisticChip extends StatelessWidget {
+  const _LogisticChip({required this.status});
+  final String status;
+
+  Color _color() {
+    switch (status) {
+      case 'SellerPending':
+        return Colors.brown;
+      case 'ToOriginHub':
+        return Colors.orange;
+      case 'AtOriginHub':
+        return Colors.deepOrange;
+      case 'ToLocalHub':
+        return Colors.teal;
+      case 'AtLocalHub':
+        return Colors.blueAccent;
+      case 'PickedUp':
+        return Colors.indigo;
+      case 'Delivering':
+        return Colors.purple;
+      case 'Delivered':
+        return Colors.green;
+      case 'Cancelled':
+        return Colors.grey;
+      default:
+        return Colors.blueGrey;
+    }
+  }
+
+  String _label() {
+    switch (status) {
+      case 'SellerPending':
+        return 'Chờ shop';
+      case 'ToOriginHub':
+        return 'Đến kho tổng';
+      case 'AtOriginHub':
+        return 'Ở kho tổng';
+      case 'ToLocalHub':
+        return 'Đến kho địa phương';
+      case 'AtLocalHub':
+        return 'Ở kho địa phương';
+      case 'PickedUp':
+        return 'Đã lấy';
+      case 'Delivering':
+        return 'Đang giao';
+      case 'Delivered':
+        return 'Hoàn tất';
+      case 'Cancelled':
+        return 'Hủy';
+      default:
+        return status;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = _color();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: c.withOpacity(.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: c.withOpacity(.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.local_shipping, size: 14, color: c),
+          const SizedBox(width: 4),
+          Text(
+            _label(),
+            style: TextStyle(
+              color: c,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
