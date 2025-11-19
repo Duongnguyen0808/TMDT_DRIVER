@@ -3,9 +3,6 @@ import '../../utils/currency.dart';
 import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../controllers/orders_controller.dart';
-import 'package:vietmap_flutter_gl/vietmap_flutter_gl.dart';
-import '../../config/vietmap_config.dart';
-import 'package:get_storage/get_storage.dart';
 import '../widgets/shipper_appbar.dart';
 
 class OrderDetailPage extends StatefulWidget {
@@ -17,34 +14,27 @@ class OrderDetailPage extends StatefulWidget {
 }
 
 class _OrderDetailPageState extends State<OrderDetailPage> {
-  VietmapController? _vietmapController;
-  bool showInternalMap = true; // Vietmap nội bộ thay cho OSM
-  final box = GetStorage();
-  bool _updating = false; // lock status updates
-
-  @override
-  void initState() {
-    super.initState();
-    final externalPref = box.read('shipper.pref.externalNav') as bool?;
-    if (externalPref != null) {
-      showInternalMap = !externalPref;
-    }
-  }
+  bool _updating = false; // Giữ lại biến này để khóa nút khi đang call API
 
   @override
   Widget build(BuildContext context) {
     final ctrl = Get.find<DriverOrdersController>();
     final order = widget.order;
+
+    // Lấy dữ liệu cơ bản
     final status = (order['orderStatus'] ?? '').toString();
     final logisticStatus = (order['logisticStatus'] ?? '').toString();
     final addr = (order['deliveryAddress']?['addressLine1'] ?? '').toString();
     final storeTitle = (order['storeId']?['title'] ?? '').toString();
+
     final orderTotal =
         double.tryParse(order['orderTotal']?.toString() ?? '0') ?? 0;
     final deliveryFee =
         double.tryParse(order['deliveryFee']?.toString() ?? '0') ?? 0;
     final grandTotal =
         double.tryParse(order['grandTotal']?.toString() ?? '0') ?? 0;
+
+    // Lấy tọa độ Khách (Recipient)
     final List recipientCoords = (order['recipientCoords'] ?? []) as List;
     final double? destLat = recipientCoords.isNotEmpty
         ? (recipientCoords[0] as num).toDouble()
@@ -52,6 +42,8 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     final double? destLng = recipientCoords.length > 1
         ? (recipientCoords[1] as num).toDouble()
         : null;
+
+    // Lấy tọa độ Shop (Store)
     final List storeCoords = (order['storeCoords'] ?? []) as List;
     final double? storeLat = storeCoords.isNotEmpty
         ? (storeCoords[0] as num).toDouble()
@@ -67,170 +59,158 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Mã: ${order['_id']}'),
+            // --- Phần thông tin đơn hàng ---
+            Text(
+              'Mã: ${order['_id']}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 8),
-            Text('Trạng thái: $status'),
-            if (logisticStatus.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              _LogisticChip(status: logisticStatus),
-            ],
-            const SizedBox(height: 8),
-            Text('Cửa hàng: $storeTitle'),
-            const SizedBox(height: 8),
-            Text('Địa chỉ giao: $addr'),
-            const SizedBox(height: 8),
-            Text('Tạm tính: ${formatVND(orderTotal)}'),
-            Text('Phí giao: ${formatVND(deliveryFee)}'),
-            Text('Tổng: ${formatVND(grandTotal)}'),
-            const SizedBox(height: 12),
-            if (destLat != null && destLng != null) ...[
-              Row(
-                children: [
-                  ChoiceChip(
-                    label: const Text('Vietmap trong app'),
-                    selected: showInternalMap,
-                    onSelected: (_) {
-                      setState(() => showInternalMap = true);
-                      box.write('shipper.pref.externalNav', false);
-                    },
-                  ),
-                  const SizedBox(width: 8),
-                  ChoiceChip(
-                    label: const Text('Điều hướng ngoài'),
-                    selected: !showInternalMap,
-                    onSelected: (_) {
-                      setState(() => showInternalMap = false);
-                      box.write('shipper.pref.externalNav', true);
-                    },
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              if (showInternalMap)
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: SizedBox(
-                    height: 260,
-                    width: double.infinity,
-                    child: Stack(
-                      children: [
-                        VietmapGL(
-                          styleString: vietmapStyleUrl(),
-                          initialCameraPosition: CameraPosition(
-                            target: LatLng(destLat, destLng),
-                            zoom: 13,
-                          ),
-                          onMapCreated: (controller) async {
-                            _vietmapController = controller;
-                            await _addMarkersAndFitBounds(
-                              destLat,
-                              destLng,
-                              storeLat,
-                              storeLng,
-                            );
-                          },
-                        ),
-                        Positioned(
-                          right: 8,
-                          bottom: 8,
-                          child: _MapCircleButton(
-                            icon: Icons.my_location,
-                            onTap: () async {
-                              await _addMarkersAndFitBounds(
-                                destLat,
-                                destLng,
-                                storeLat,
-                                storeLng,
-                              );
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              else
-                GestureDetector(
-                  onTap: () async {
-                    await _openNavChooser(
-                      destLat: destLat,
-                      destLng: destLng,
-                      storeLat: storeLat,
-                      storeLng: storeLng,
-                    );
-                  },
-                  child: Container(
-                    height: 120,
-                    width: double.infinity,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.grey.shade300),
-                    ),
-                    child: const Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.navigation, color: Colors.blueGrey),
-                        SizedBox(height: 6),
-                        Text('Nhấn để mở điều hướng ngoài'),
-                      ],
-                    ),
+            Row(
+              children: [
+                const Text('Trạng thái: '),
+                if (logisticStatus.isNotEmpty)
+                  _LogisticChip(status: logisticStatus),
+              ],
+            ),
+            const Divider(height: 24),
+
+            // --- Phần thông tin Shop ---
+            const Text(
+              'LẤY HÀNG TẠI:',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            Text(
+              storeTitle,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+
+            // const SizedBox(height: 4),
+            // Text(storeAddr), // Hiển thị địa chỉ shop nếu có
+            const SizedBox(height: 16),
+
+            // --- Phần thông tin Khách ---
+            const Text(
+              'GIAO HÀNG ĐẾN:',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            Text(
+              addr,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+
+            const Divider(height: 24),
+
+            // --- Phần Tài chính ---
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Tổng tiền thu:'),
+                Text(
+                  formatVND(grandTotal),
+                  style: const TextStyle(
+                    fontSize: 18,
+                    color: Colors.red,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-            ],
-            const SizedBox(height: 12),
-            ElevatedButton.icon(
-              onPressed: (destLat != null && destLng != null)
-                  ? () async {
-                      await _openNavChooser(
-                        destLat: destLat,
-                        destLng: destLng,
-                        storeLat: storeLat,
-                        storeLng: storeLng,
-                      );
-                    }
-                  : null,
-              icon: const Icon(Icons.map),
-              label: const Text('Mở bản đồ ngoài'),
+              ],
             ),
-            const Spacer(),
-            // Action buttons adapt to new flow:
-            // - Available & claim now handled in list
-            // - Delivering -> mark delivered
-            // - Preparing state no direct driver start; occurs via claim
-            if (status == 'Delivering') ...[
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: !_updating
-                          ? () async {
-                              setState(() => _updating = true);
-                              final ok = await ctrl.markDelivered(
-                                order['_id'].toString(),
-                              );
-                              setState(() => _updating = false);
-                              if (ok) {
-                                Get.snackbar(
-                                  'Hoàn tất',
-                                  'Đơn đã giao thành công',
-                                  snackPosition: SnackPosition.BOTTOM,
-                                );
-                                Get.back();
-                              }
-                            }
-                          : null,
-                      child: _updating
-                          ? const SizedBox(
-                              height: 18,
-                              width: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Đã giao (Hoàn tất)'),
+            const SizedBox(height: 4),
+            Text(
+              '(Tạm tính: ${formatVND(orderTotal)} + Ship: ${formatVND(deliveryFee)})',
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+
+            const SizedBox(height: 24),
+
+            // --- PHẦN 2 NÚT ĐIỀU HƯỚNG (THAY ĐỔI CHÍNH) ---
+            const Text(
+              'Điều hướng bản đồ:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                // Nút đến Shop
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: (storeLat != null && storeLng != null)
+                        ? () => _openMap(storeLat, storeLng, title: storeTitle)
+                        : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange.shade100,
+                      foregroundColor: Colors.deepOrange,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
+                    icon: const Icon(Icons.store),
+                    label: const Text('Đến Shop'),
                   ),
-                ],
+                ),
+                const SizedBox(width: 12),
+                // Nút đến Khách
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: (destLat != null && destLng != null)
+                        ? () => _openMap(destLat, destLng, title: "Khách hàng")
+                        : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue.shade100,
+                      foregroundColor: Colors.blue.shade900,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    icon: const Icon(Icons.person_pin_circle),
+                    label: const Text('Đến Khách'),
+                  ),
+                ),
+              ],
+            ),
+
+            const Spacer(),
+
+            // --- Button xử lý trạng thái đơn hàng (Giữ nguyên logic cũ) ---
+            if (status == 'Delivering') ...[
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  onPressed: !_updating
+                      ? () async {
+                          setState(() => _updating = true);
+                          final ok = await ctrl.markDelivered(
+                            order['_id'].toString(),
+                          );
+                          setState(() => _updating = false);
+                          if (ok) {
+                            Get.snackbar(
+                              'Hoàn tất',
+                              'Đơn đã giao thành công',
+                              snackPosition: SnackPosition.BOTTOM,
+                            );
+                            Get.back();
+                          }
+                        }
+                      : null,
+                  child: _updating
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Text(
+                          'ĐÃ GIAO HÀNG (HOÀN TẤT)',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                ),
               ),
             ],
           ],
@@ -239,161 +219,40 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     );
   }
 
-  Future<void> _addMarkersAndFitBounds(
-    double destLat,
-    double destLng,
-    double? storeLat,
-    double? storeLng,
-  ) async {
-    if (_vietmapController == null) return;
-    await _vietmapController!.clearSymbols();
-    await _vietmapController!.addSymbol(
-      SymbolOptions(
-        geometry: LatLng(destLat, destLng),
-        iconImage: "marker-15",
-        iconSize: 1.5,
-      ),
-    );
-    if (storeLat != null && storeLng != null) {
-      await _vietmapController!.addSymbol(
-        SymbolOptions(
-          geometry: LatLng(storeLat, storeLng),
-          iconImage: "shop-15",
-          iconSize: 1.5,
-        ),
-      );
-      // Vẽ tuyến đường placeholder: các điểm nhỏ giữa cửa hàng và điểm giao
-      await _drawRoutePlaceholder(
-        LatLng(storeLat, storeLng),
-        LatLng(destLat, destLng),
-        segments: 14,
-      );
-      final swLat = storeLat < destLat ? storeLat : destLat;
-      final swLng = storeLng < destLng ? storeLng : destLng;
-      final neLat = storeLat > destLat ? storeLat : destLat;
-      final neLng = storeLng > destLng ? storeLng : destLng;
-      await _vietmapController!.animateCamera(
-        CameraUpdate.newLatLngBounds(
-          LatLngBounds(
-            southwest: LatLng(swLat, swLng),
-            northeast: LatLng(neLat, neLng),
-          ),
-          left: 32,
-          top: 32,
-          bottom: 32,
-          right: 32,
-        ),
-      );
-    } else {
-      await _vietmapController!.animateCamera(
-        CameraUpdate.newLatLng(LatLng(destLat, destLng)),
-      );
-    }
-  }
-
-  Future<void> _drawRoutePlaceholder(
-    LatLng origin,
-    LatLng dest, {
-    int segments = 10,
-  }) async {
-    if (_vietmapController == null) return;
-    if (segments < 2) segments = 2;
-    // Không vẽ nếu hai điểm quá gần
-    final dLat = dest.latitude - origin.latitude;
-    final dLng = dest.longitude - origin.longitude;
-    if (dLat.abs() < 0.00005 && dLng.abs() < 0.00005) return;
-    for (int i = 1; i < segments; i++) {
-      final frac = i / segments;
-      final lat = origin.latitude + dLat * frac;
-      final lng = origin.longitude + dLng * frac;
-      await _vietmapController!.addSymbol(
-        SymbolOptions(
-          geometry: LatLng(lat, lng),
-          iconImage:
-              "marker-15", // Placeholder - có thể đổi sang icon tuyến đường chuyên biệt nếu style hỗ trợ
-          iconSize: 0.6,
-        ),
-      );
-    }
-  }
-
-  Future<void> _openNavChooser({
-    required double destLat,
-    required double destLng,
-    double? storeLat,
-    double? storeLng,
-  }) async {
-    final hasOrigin = storeLat != null && storeLng != null;
-    final originParam = hasOrigin
-        ? '${storeLat.toStringAsFixed(6)},${storeLng.toStringAsFixed(6)}'
-        : '';
-    final destParam =
-        '${destLat.toStringAsFixed(6)},${destLng.toStringAsFixed(6)}';
-
-    final googleMapsIOS = Uri.parse(
-      'comgooglemaps://?${hasOrigin ? 'saddr=$originParam&' : ''}daddr=$destParam&directionsmode=driving',
-    );
-    final googleMapsAndroidNav = Uri.parse(
-      'google.navigation:q=$destParam&mode=d',
-    );
-    final wazeUri = Uri.parse('waze://?ll=$destParam&navigate=yes');
-    final appleMaps = Uri.parse(
-      'maps://?${hasOrigin ? 'saddr=$originParam&' : ''}daddr=$destParam&dirflg=d',
-    );
-    final browserMaps = Uri.parse(
-      'https://www.google.com/maps/dir/?api=1${hasOrigin ? '&origin=$originParam' : ''}&destination=$destParam&travelmode=driving',
+  // Hàm mở bản đồ đơn giản hóa
+  Future<void> _openMap(double lat, double lng, {String title = ''}) async {
+    // 1. Tạo URL chuyên dụng cho Google Maps App trên Android/iOS
+    final Uri googleMapAppUrl = Uri.parse(
+      "google.navigation:q=$lat,$lng&mode=d",
     );
 
-    final opts = <_NavOption>[];
-    if (await canLaunchUrl(googleMapsIOS)) {
-      opts.add(_NavOption('Google Maps', Icons.map, googleMapsIOS));
-    }
-    if (await canLaunchUrl(googleMapsAndroidNav)) {
-      opts.add(
-        _NavOption('Google Maps (Android)', Icons.map, googleMapsAndroidNav),
-      );
-    }
-    if (await canLaunchUrl(wazeUri)) {
-      opts.add(_NavOption('Waze', Icons.directions_car, wazeUri));
-    }
-    if (await canLaunchUrl(appleMaps)) {
-      opts.add(_NavOption('Apple Maps', Icons.map_outlined, appleMaps));
-    }
-    opts.add(_NavOption('Trình duyệt', Icons.language, browserMaps));
+    // 2. Tạo URL mở bằng trình duyệt (fallback nếu không có app)
+    final Uri googleMapBrowserUrl = Uri.parse(
+      "https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=driving",
+    );
 
-    await showModalBottomSheet(
-      context: context,
-      builder: (ctx) {
-        return SafeArea(
-          child: ListView.separated(
-            shrinkWrap: true,
-            itemCount: opts.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (_, i) {
-              final o = opts[i];
-              return ListTile(
-                leading: Icon(o.icon),
-                title: Text(o.title),
-                onTap: () async {
-                  Navigator.of(ctx).pop();
-                  if (await canLaunchUrl(o.uri)) {
-                    await launchUrl(
-                      o.uri,
-                      mode: LaunchMode.externalApplication,
-                    );
-                  } else {
-                    await launchUrl(
-                      browserMaps,
-                      mode: LaunchMode.externalApplication,
-                    );
-                  }
-                },
-              );
-            },
-          ),
+    // 3. Tạo URL cho Apple Maps (dành cho iOS)
+    final Uri appleMapsUrl = Uri.parse(
+      "https://maps.apple.com/?daddr=$lat,$lng&dirflg=d",
+    );
+
+    try {
+      if (await canLaunchUrl(googleMapAppUrl)) {
+        // Ưu tiên mở bằng App Google Maps
+        await launchUrl(googleMapAppUrl);
+      } else if (await canLaunchUrl(appleMapsUrl)) {
+        // Nếu là iPhone và không có Google Maps -> Mở Apple Maps
+        await launchUrl(appleMapsUrl);
+      } else {
+        // Cuối cùng mở bằng trình duyệt
+        await launchUrl(
+          googleMapBrowserUrl,
+          mode: LaunchMode.externalApplication,
         );
-      },
-    );
+      }
+    } catch (e) {
+      Get.snackbar("Lỗi", "Không thể mở bản đồ: $e");
+    }
   }
 }
 
@@ -477,36 +336,6 @@ class _LogisticChip extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _NavOption {
-  final String title;
-  final IconData icon;
-  final Uri uri;
-  _NavOption(this.title, this.icon, this.uri);
-}
-
-class _MapCircleButton extends StatelessWidget {
-  const _MapCircleButton({required this.icon, required this.onTap});
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      shape: const CircleBorder(),
-      elevation: 2,
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onTap,
-        child: const Padding(
-          padding: EdgeInsets.all(8.0),
-          child: Icon(Icons.my_location, size: 20),
-        ),
       ),
     );
   }
