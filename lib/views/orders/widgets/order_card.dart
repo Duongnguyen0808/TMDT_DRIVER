@@ -112,6 +112,12 @@ class OrderCard extends StatelessWidget {
 
   Color _statusColor(String s) {
     switch (s) {
+      case 'ReadyForPickup':
+        return Colors.deepOrange;
+      case 'WaitingShipper':
+        return Colors.amber.shade700;
+      case 'PickedUp':
+        return Colors.teal;
       case 'Preparing':
         return Colors.deepOrangeAccent;
       case 'Delivering':
@@ -134,6 +140,12 @@ class OrderCard extends StatelessWidget {
 
   IconData _statusIcon(String s) {
     switch (s) {
+      case 'ReadyForPickup':
+        return Icons.qr_code_2;
+      case 'WaitingShipper':
+        return Icons.motorcycle;
+      case 'PickedUp':
+        return Icons.inventory_2_outlined;
       case 'Preparing':
         return Icons.hourglass_bottom;
       case 'Delivering':
@@ -151,6 +163,12 @@ class OrderCard extends StatelessWidget {
 
   String _statusLabel(String s) {
     switch (s) {
+      case 'ReadyForPickup':
+        return 'Sẵn sàng';
+      case 'WaitingShipper':
+        return 'Chờ lấy';
+      case 'PickedUp':
+        return 'Đã lấy';
       case 'Preparing':
         return 'Chuẩn bị';
       case 'Delivering':
@@ -209,6 +227,12 @@ class _StatusChip extends StatelessWidget {
 
   IconData _miniIcon() {
     switch (status) {
+      case 'ReadyForPickup':
+        return Icons.qr_code_2;
+      case 'WaitingShipper':
+        return Icons.motorcycle;
+      case 'PickedUp':
+        return Icons.inventory_2;
       case 'Preparing':
         return Icons.hourglass_empty;
       case 'Delivering':

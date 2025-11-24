@@ -4,10 +4,13 @@ import 'package:get_storage/get_storage.dart';
 import 'views/login_page.dart';
 import 'views/orders/orders_page.dart';
 import 'package:jwt_decode/jwt_decode.dart';
+import 'controllers/auth_controller.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await GetStorage.init();
+  // Đăng ký AuthController sớm để mọi màn hình (kể cả khi bỏ qua login) đều có thể dùng
+  Get.put(AuthController(), permanent: true);
   runApp(const MyApp());
 }
 

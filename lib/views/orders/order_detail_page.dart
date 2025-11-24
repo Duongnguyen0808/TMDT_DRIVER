@@ -14,19 +14,37 @@ class OrderDetailPage extends StatefulWidget {
 }
 
 class _OrderDetailPageState extends State<OrderDetailPage> {
-  bool _updating = false; // Giữ lại biến này để khóa nút khi đang call API
+  late final DriverOrdersController ctrl;
+  late Map<String, dynamic> _order;
+  bool _statusUpdating = false;
+  bool _pickupBusy = false;
+  bool _refreshing = false;
+  final TextEditingController _codeCtrl = TextEditingController();
+  final TextEditingController _noteCtrl = TextEditingController();
+
+  String get _orderId => (_order['_id'] ?? '').toString();
+
+  @override
+  void initState() {
+    super.initState();
+    ctrl = Get.find<DriverOrdersController>();
+    _order = Map<String, dynamic>.from(widget.order);
+  }
+
+  @override
+  void dispose() {
+    _codeCtrl.dispose();
+    _noteCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final ctrl = Get.find<DriverOrdersController>();
-    final order = widget.order;
-
-    // Lấy dữ liệu cơ bản
+    final order = _order;
     final status = (order['orderStatus'] ?? '').toString();
     final logisticStatus = (order['logisticStatus'] ?? '').toString();
     final addr = (order['deliveryAddress']?['addressLine1'] ?? '').toString();
     final storeTitle = (order['storeId']?['title'] ?? '').toString();
-
     final orderTotal =
         double.tryParse(order['orderTotal']?.toString() ?? '0') ?? 0;
     final deliveryFee =
@@ -34,8 +52,9 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     final grandTotal =
         double.tryParse(order['grandTotal']?.toString() ?? '0') ?? 0;
 
-    // Lấy tọa độ Khách (Recipient)
-    final List recipientCoords = (order['recipientCoords'] ?? []) as List;
+    final List recipientCoords = order['recipientCoords'] is List
+        ? List.from(order['recipientCoords'] as List)
+        : const [];
     final double? destLat = recipientCoords.isNotEmpty
         ? (recipientCoords[0] as num).toDouble()
         : null;
@@ -43,8 +62,9 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
         ? (recipientCoords[1] as num).toDouble()
         : null;
 
-    // Lấy tọa độ Shop (Store)
-    final List storeCoords = (order['storeCoords'] ?? []) as List;
+    final List storeCoords = order['storeCoords'] is List
+        ? List.from(order['storeCoords'] as List)
+        : const [];
     final double? storeLat = storeCoords.isNotEmpty
         ? (storeCoords[0] as num).toDouble()
         : null;
@@ -53,28 +73,42 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
         : null;
 
     return Scaffold(
-      appBar: const ShipperAppBar(title: 'Chi tiết đơn'),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      appBar: ShipperAppBar(
+        title: 'Chi tiết đơn',
+        actions: [
+          IconButton(
+            onPressed: _refreshing ? null : _refreshOrder,
+            icon: _refreshing
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _refreshOrder,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
           children: [
-            // --- Phần thông tin đơn hàng ---
             Text(
-              'Mã: ${order['_id']}',
+              'Mã: $_orderId',
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Row(
               children: [
-                const Text('Trạng thái: '),
+                const Text('Trạng thái logistics: '),
                 if (logisticStatus.isNotEmpty)
-                  _LogisticChip(status: logisticStatus),
+                  _LogisticChip(status: logisticStatus)
+                else
+                  const Text('--'),
               ],
             ),
             const Divider(height: 24),
-
-            // --- Phần thông tin Shop ---
             const Text(
               'LẤY HÀNG TẠI:',
               style: TextStyle(fontSize: 12, color: Colors.grey),
@@ -83,12 +117,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
               storeTitle,
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
-
-            // const SizedBox(height: 4),
-            // Text(storeAddr), // Hiển thị địa chỉ shop nếu có
             const SizedBox(height: 16),
-
-            // --- Phần thông tin Khách ---
             const Text(
               'GIAO HÀNG ĐẾN:',
               style: TextStyle(fontSize: 12, color: Colors.grey),
@@ -97,10 +126,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
               addr,
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
-
             const Divider(height: 24),
-
-            // --- Phần Tài chính ---
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -120,10 +146,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
               '(Tạm tính: ${formatVND(orderTotal)} + Ship: ${formatVND(deliveryFee)})',
               style: const TextStyle(fontSize: 12, color: Colors.grey),
             ),
-
             const SizedBox(height: 24),
-
-            // --- PHẦN 2 NÚT ĐIỀU HƯỚNG (THAY ĐỔI CHÍNH) ---
             const Text(
               'Điều hướng bản đồ:',
               style: TextStyle(fontWeight: FontWeight.bold),
@@ -131,7 +154,6 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
             const SizedBox(height: 8),
             Row(
               children: [
-                // Nút đến Shop
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: (storeLat != null && storeLng != null)
@@ -147,11 +169,10 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                // Nút đến Khách
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: (destLat != null && destLng != null)
-                        ? () => _openMap(destLat, destLng, title: "Khách hàng")
+                        ? () => _openMap(destLat, destLng, title: 'Khách hàng')
                         : null,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue.shade100,
@@ -164,53 +185,284 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
                 ),
               ],
             ),
+            const SizedBox(height: 24),
+            _buildPickupSection(status),
+            const SizedBox(height: 24),
+            _buildStatusActions(status),
+          ],
+        ),
+      ),
+    );
+  }
 
-            const Spacer(),
+  Future<void> _refreshOrder() async {
+    setState(() => _refreshing = true);
+    await ctrl.fetchMyOrders(force: true);
+    final latest = ctrl.findCachedOrder(_orderId);
+    if (mounted && latest != null) {
+      setState(() => _order = latest);
+    }
+    if (mounted) {
+      setState(() => _refreshing = false);
+    }
+  }
 
-            // --- Button xử lý trạng thái đơn hàng (Giữ nguyên logic cũ) ---
-            if (status == 'Delivering') ...[
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
+  Future<void> _handleCheckin() async {
+    if (_pickupBusy) return;
+    setState(() => _pickupBusy = true);
+    final note = _noteCtrl.text.trim();
+    final ok = await ctrl.pickupCheckin(
+      _orderId,
+      note: note.isEmpty ? null : note,
+    );
+    if (!mounted) return;
+    setState(() => _pickupBusy = false);
+    if (ok) {
+      Get.snackbar(
+        'Đã báo cửa hàng',
+        'Bạn đã check-in tại cửa hàng',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      await _refreshOrder();
+    } else {
+      Get.snackbar(
+        'Không thể báo cửa hàng',
+        'Vui lòng thử lại',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.redAccent,
+        colorText: Colors.white,
+      );
+    }
+  }
+
+  Future<void> _handleConfirmPickup() async {
+    final code = _codeCtrl.text.trim();
+    if (code.isEmpty) {
+      Get.snackbar(
+        'Thiếu mã',
+        'Nhập mã 6 số do cửa hàng cung cấp',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      return;
+    }
+    if (_pickupBusy) return;
+    setState(() => _pickupBusy = true);
+    final note = _noteCtrl.text.trim();
+    final ok = await ctrl.confirmPickup(
+      _orderId,
+      code,
+      note: note.isEmpty ? null : note,
+    );
+    if (!mounted) return;
+    setState(() => _pickupBusy = false);
+    if (ok) {
+      _codeCtrl.clear();
+      Get.snackbar(
+        'Đã nhận hàng',
+        'Bắt đầu rời cửa hàng để giao khách',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      await _refreshOrder();
+    } else {
+      Get.snackbar(
+        'Không thể xác nhận',
+        'Kiểm tra mã và thử lại',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.redAccent,
+        colorText: Colors.white,
+      );
+    }
+  }
+
+  Future<void> _startDelivering() async {
+    if (_statusUpdating) return;
+    setState(() => _statusUpdating = true);
+    final ok = await ctrl.updateOrderStatus(_orderId, 'Delivering');
+    if (!mounted) return;
+    setState(() => _statusUpdating = false);
+    if (ok) {
+      Get.snackbar(
+        'Đang giao',
+        'Bạn đang trên đường tới khách',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      await _refreshOrder();
+    } else {
+      Get.snackbar(
+        'Không thể cập nhật',
+        'Vui lòng thử lại',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.redAccent,
+        colorText: Colors.white,
+      );
+    }
+  }
+
+  Future<void> _markDelivered() async {
+    if (_statusUpdating) return;
+    setState(() => _statusUpdating = true);
+    final ok = await ctrl.markDelivered(_orderId);
+    if (!mounted) return;
+    setState(() => _statusUpdating = false);
+    if (ok) {
+      Get.snackbar(
+        'Hoàn tất',
+        'Đơn đã giao thành công',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      Get.back();
+    } else {
+      Get.snackbar(
+        'Không thể cập nhật',
+        'Vui lòng thử lại',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.redAccent,
+        colorText: Colors.white,
+      );
+    }
+  }
+
+  Widget _buildPickupSection(String status) {
+    final assignedAt = _parseDate(_order['pickupAssignedAt']);
+    final readyAt = _parseDate(_order['pickupReadyAt']);
+    final checkinAt = _parseDate(_order['pickupCheckinAt']);
+    final confirmAt = _parseDate(_order['pickupConfirmedAt']);
+    final expiresAt = _parseDate(_order['pickupCodeExpiresAt']);
+    final codeAvailable = (_order['pickupCode'] ?? '').toString().isNotEmpty;
+    final checkinLocation = _formatLocation(_order['pickupCheckinLocation']);
+    final pickupNotes = (_order['pickupNotes'] ?? '').toString();
+    final awaitingStore = readyAt == null;
+    final canInteract = {'WaitingShipper', 'ReadyForPickup'}.contains(status);
+    final showCheckin = canInteract;
+    final showConfirm = canInteract && codeAvailable;
+    final showAwaitingCode = canInteract && readyAt != null && !codeAvailable;
+
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                Icon(Icons.handshake_outlined, color: Colors.indigo),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Bàn giao shop ↔ shipper',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                   ),
-                  onPressed: !_updating
-                      ? () async {
-                          setState(() => _updating = true);
-                          final ok = await ctrl.markDelivered(
-                            order['_id'].toString(),
-                          );
-                          setState(() => _updating = false);
-                          if (ok) {
-                            Get.snackbar(
-                              'Hoàn tất',
-                              'Đơn đã giao thành công',
-                              snackPosition: SnackPosition.BOTTOM,
-                            );
-                            Get.back();
-                          }
-                        }
-                      : null,
-                  child: _updating
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : const Text(
-                          'ĐÃ GIAO HÀNG (HOÀN TẤT)',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
                 ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _timelineRow(
+              'Được giao cho bạn',
+              assignedAt,
+              Icons.assignment_ind_outlined,
+            ),
+            _timelineRow('Shop sẵn sàng', readyAt, Icons.storefront_outlined),
+            _timelineRow(
+              'Bạn đã có mặt',
+              checkinAt,
+              Icons.punch_clock_outlined,
+              detail: checkinLocation,
+            ),
+            _timelineRow(
+              'Xác nhận lấy hàng',
+              confirmAt,
+              Icons.task_alt_outlined,
+            ),
+            if (pickupNotes.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Ghi chú: $pickupNotes',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            const SizedBox(height: 12),
+            if (awaitingStore)
+              _infoBanner(
+                'Cửa hàng chưa báo sẵn sàng. Liên hệ cửa hàng để họ phát mã.',
+                icon: Icons.hourglass_bottom,
+                color: Colors.orange.shade100,
+              )
+            else if (showAwaitingCode)
+              _infoBanner(
+                'Shop đã sẵn sàng nhưng chưa đưa mã. Nhờ nhân viên đọc mã 6 số cho bạn.',
+                icon: Icons.lock_clock,
+                color: Colors.amber.shade100,
+              )
+            else if (!canInteract && confirmAt != null)
+              _infoBanner(
+                'Bạn đã lấy hàng. Nhớ chuyển sang Đang giao khi rời cửa hàng.',
+                icon: Icons.check_circle_outline,
+                color: Colors.green.shade100,
+              ),
+            if (_pickupBusy)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: LinearProgressIndicator(minHeight: 2),
+              ),
+            if (showCheckin) ...[
+              ElevatedButton.icon(
+                onPressed: _pickupBusy ? null : _handleCheckin,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blueGrey.shade700,
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.punch_clock),
+                label: const Text('Tôi đã đến cửa hàng'),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (showConfirm) ...[
+              TextField(
+                controller: _codeCtrl,
+                enabled: !_pickupBusy,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Nhập mã do cửa hàng cung cấp',
+                  prefixIcon: Icon(Icons.qr_code_2),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              if (expiresAt != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    'Mã hết hạn: ${_formatDate(expiresAt)}',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+              const SizedBox(height: 12),
+            ],
+            TextField(
+              controller: _noteCtrl,
+              maxLines: 2,
+              enabled: !_pickupBusy && (showCheckin || showConfirm),
+              decoration: const InputDecoration(
+                labelText: 'Ghi chú cho cửa hàng (tuỳ chọn)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (showConfirm) ...[
+              const SizedBox(height: 12),
+              ElevatedButton.icon(
+                onPressed: _pickupBusy ? null : _handleConfirmPickup,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.indigo,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                icon: const Icon(Icons.verified_outlined),
+                label: const Text('XÁC NHẬN ĐÃ NHẬN HÀNG'),
               ),
             ],
           ],
@@ -219,39 +471,198 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     );
   }
 
-  // Hàm mở bản đồ đơn giản hóa
+  Widget _buildStatusActions(String status) {
+    final widgets = <Widget>[];
+    if (status == 'PickedUp') {
+      widgets.add(
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.deepPurple,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+          ),
+          onPressed: _statusUpdating ? null : _startDelivering,
+          child: _statusUpdating
+              ? const SizedBox(
+                  height: 20,
+                  width: 20,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                )
+              : const Text(
+                  'BẮT ĐẦU GIAO (ĐANG ĐI)',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+        ),
+      );
+    }
+    if (status == 'Delivering') {
+      widgets.add(
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.green,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+          ),
+          onPressed: _statusUpdating ? null : _markDelivered,
+          child: _statusUpdating
+              ? const SizedBox(
+                  height: 20,
+                  width: 20,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                )
+              : const Text(
+                  'ĐÃ GIAO HÀNG (HOÀN TẤT)',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+        ),
+      );
+    }
+
+    if (widgets.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('Thao tác', style: TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 12),
+        for (int i = 0; i < widgets.length; i++) ...[
+          widgets[i],
+          if (i != widgets.length - 1) const SizedBox(height: 12),
+        ],
+      ],
+    );
+  }
+
+  Widget _timelineRow(
+    String label,
+    DateTime? time,
+    IconData icon, {
+    String? detail,
+  }) {
+    final detailText = detail != null && detail.trim().isNotEmpty
+        ? detail.trim()
+        : null;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: Colors.blueGrey.shade700),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  time != null ? _formatDate(time) : '---',
+                  style: const TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+                if (detailText != null)
+                  Text(
+                    detailText,
+                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoBanner(
+    String message, {
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: Colors.black54),
+          const SizedBox(width: 8),
+          Expanded(child: Text(message, style: const TextStyle(fontSize: 13))),
+        ],
+      ),
+    );
+  }
+
+  DateTime? _parseDate(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is DateTime) return raw;
+    if (raw is String && raw.isNotEmpty) {
+      try {
+        return DateTime.parse(raw);
+      } catch (_) {}
+    }
+    if (raw is int) {
+      return DateTime.fromMillisecondsSinceEpoch(raw);
+    }
+    return null;
+  }
+
+  String _formatDate(DateTime? dt) {
+    if (dt == null) return '---';
+    final local = dt.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(local.day)}/${two(local.month)} ${two(local.hour)}:${two(local.minute)}';
+  }
+
+  String _formatLocation(dynamic raw) {
+    if (raw is Map) {
+      final lat = (raw['latitude'] as num?)?.toDouble();
+      final lng = (raw['longitude'] as num?)?.toDouble();
+      if (lat != null && lng != null) {
+        return '(${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)})';
+      }
+    }
+    return '';
+  }
+
   Future<void> _openMap(double lat, double lng, {String title = ''}) async {
-    // 1. Tạo URL chuyên dụng cho Google Maps App trên Android/iOS
+    final targetLabel = title.isEmpty ? 'điểm đến' : title;
     final Uri googleMapAppUrl = Uri.parse(
-      "google.navigation:q=$lat,$lng&mode=d",
+      'google.navigation:q=$lat,$lng&mode=d',
     );
-
-    // 2. Tạo URL mở bằng trình duyệt (fallback nếu không có app)
     final Uri googleMapBrowserUrl = Uri.parse(
-      "https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=driving",
+      'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=driving',
     );
-
-    // 3. Tạo URL cho Apple Maps (dành cho iOS)
     final Uri appleMapsUrl = Uri.parse(
-      "https://maps.apple.com/?daddr=$lat,$lng&dirflg=d",
+      'https://maps.apple.com/?daddr=$lat,$lng&dirflg=d',
     );
 
     try {
       if (await canLaunchUrl(googleMapAppUrl)) {
-        // Ưu tiên mở bằng App Google Maps
         await launchUrl(googleMapAppUrl);
       } else if (await canLaunchUrl(appleMapsUrl)) {
-        // Nếu là iPhone và không có Google Maps -> Mở Apple Maps
         await launchUrl(appleMapsUrl);
       } else {
-        // Cuối cùng mở bằng trình duyệt
         await launchUrl(
           googleMapBrowserUrl,
           mode: LaunchMode.externalApplication,
         );
       }
     } catch (e) {
-      Get.snackbar("Lỗi", "Không thể mở bản đồ: $e");
+      Get.snackbar('Lỗi', 'Không thể mở bản đồ tới $targetLabel: $e');
     }
   }
 }
