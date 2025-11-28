@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 
 import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
@@ -42,6 +44,8 @@ class DriverOrdersController extends GetxController {
   DateTime? lastAvailableFetch;
   Timer? _locationTimer;
   String? _activeDeliveringOrderId;
+  Set<String> _confirmedDeliverySnapshot = <String>{};
+  bool _confirmedDeliveryInitialized = false;
 
   String? get token => box.read('token');
 
@@ -50,18 +54,27 @@ class DriverOrdersController extends GetxController {
     if (token != null) 'Authorization': 'Bearer $token',
   };
 
+  bool _orderBlocksNewClaim(Map<String, dynamic> order) {
+    final status = (order['orderStatus'] ?? '').toString();
+    if (!_busyStatuses.contains(status)) return false;
+    final proof = order['deliveryProofPhoto'];
+    if (proof is String && proof.trim().isNotEmpty) {
+      // Proof already sent, backend allows claiming next order
+      return false;
+    }
+    return true;
+  }
+
   bool get hasActiveDelivery {
     for (final order in orders) {
-      final status = (order['orderStatus'] ?? '').toString();
-      if (_busyStatuses.contains(status)) return true;
+      if (_orderBlocksNewClaim(order)) return true;
     }
     return false;
   }
 
   Map<String, dynamic>? get currentActiveOrder {
     for (final order in orders) {
-      final status = (order['orderStatus'] ?? '').toString();
-      if (_busyStatuses.contains(status)) {
+      if (_orderBlocksNewClaim(order)) {
         return order;
       }
     }
@@ -106,6 +119,7 @@ class DriverOrdersController extends GetxController {
       final List data = jsonDecode(res.body)['data'] ?? [];
       orders.assignAll(data.map((e) => Map<String, dynamic>.from(e)));
       _cacheCurrent();
+      _handleDeliveryConfirmations();
     }
   }
 
@@ -127,15 +141,69 @@ class DriverOrdersController extends GetxController {
     }
   }
 
+  void _handleDeliveryConfirmations() {
+    final confirmedIds = orders
+        .where(
+          (order) =>
+              (order['shopDeliveryConfirmStatus'] ?? '')
+                  .toString()
+                  .toLowerCase() ==
+              'confirmed',
+        )
+        .map((order) => (order['_id'] ?? '').toString())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+
+    if (_confirmedDeliveryInitialized) {
+      final newlyConfirmed = confirmedIds.difference(
+        _confirmedDeliverySnapshot,
+      );
+      if (newlyConfirmed.isNotEmpty) {
+        _notifyConfirmedDeliveries(newlyConfirmed);
+      }
+    } else {
+      _confirmedDeliveryInitialized = true;
+    }
+    _confirmedDeliverySnapshot = confirmedIds;
+  }
+
+  void _notifyConfirmedDeliveries(Set<String> ids) {
+    final recent = orders
+        .where((order) => ids.contains((order['_id'] ?? '').toString()))
+        .take(3)
+        .map((order) {
+          final orderId = (order['_id'] ?? '').toString();
+          final shortId = orderId.length > 6
+              ? orderId.substring(orderId.length - 6).toUpperCase()
+              : orderId.toUpperCase();
+          return '#$shortId';
+        })
+        .toList();
+    if (recent.isEmpty) return;
+    final moreCount = ids.length - recent.length;
+    final message = moreCount > 0
+        ? '${recent.join(', ')} và $moreCount đơn khác đã được shop duyệt.'
+        : '${recent.join(', ')} đã được shop duyệt.';
+    Get.snackbar(
+      'Shop đã xác nhận',
+      message,
+      backgroundColor: Colors.green.shade600,
+      colorText: Colors.white,
+      duration: const Duration(seconds: 4),
+    );
+  }
+
   Future<ClaimOrderResult> claimOrder(String orderId) async {
     if (hasActiveDelivery) {
       final activeOrder = currentActiveOrder;
       final activeId = activeOrder?['_id']?.toString();
       final activeStatus =
           activeOrder?['orderStatus']?.toString() ?? 'Delivering';
+      final proofHint =
+          'Nếu đã giao xong hãy gửi bằng chứng để nhận đơn tiếp theo.';
       final message = activeId != null && activeId.isNotEmpty
-          ? 'Bạn đang giao đơn $activeId ($activeStatus). Hoàn tất trước khi nhận đơn mới.'
-          : 'Bạn đang có đơn đang giao, hãy hoàn tất trước khi nhận thêm.';
+          ? 'Bạn đang giao đơn $activeId ($activeStatus). Hoàn tất hoặc gửi bằng chứng trước khi nhận đơn mới. $proofHint'
+          : 'Bạn đang có đơn đang giao, hãy hoàn tất hoặc gửi bằng chứng trước khi nhận thêm. $proofHint';
       return ClaimOrderResult(
         success: false,
         statusCode: 409,
@@ -186,13 +254,88 @@ class DriverOrdersController extends GetxController {
     );
   }
 
-  Future<bool> markDelivered(String orderId) async {
-    final ok = await updateOrderStatus(orderId, 'Delivered');
-    if (ok) {
-      await fetchMyOrders(force: true);
-      _stopLocationUpdates(orderIdIfMatches: orderId);
+  Future<String?> uploadProofPhoto(File file) async {
+    final uri = Uri.parse('$appBaseUrl/api/upload/image');
+    final tokenValue = token;
+    final request = http.MultipartRequest('POST', uri);
+    if (tokenValue != null) {
+      request.headers['Authorization'] = 'Bearer $tokenValue';
     }
-    return ok;
+    request.files.add(await http.MultipartFile.fromPath('file', file.path));
+    try {
+      final response = await request.send();
+      final body = await response.stream.bytesToString();
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(body);
+        if (decoded is Map) {
+          return (decoded['secure_url'] ?? decoded['url'] ?? '').toString();
+        }
+      } else {
+        if (kDebugMode) {
+          print('[uploadProofPhoto] status=${response.statusCode} body=$body');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[uploadProofPhoto] error=$e');
+      }
+    }
+    return null;
+  }
+
+  Future<bool> submitDeliveryProof(
+    String orderId, {
+    required String photoUrl,
+    String? note,
+    String? recipient,
+    double? latitude,
+    double? longitude,
+    bool keepConfirmation = false,
+    bool supplementOnly = false,
+  }) async {
+    final payload = <String, dynamic>{'deliveryProofPhoto': photoUrl};
+    final trimmedNote = note?.trim();
+    if (trimmedNote != null && trimmedNote.isNotEmpty) {
+      payload['note'] = trimmedNote;
+    }
+    final trimmedRecipient = recipient?.trim();
+    if (trimmedRecipient != null && trimmedRecipient.isNotEmpty) {
+      payload['recipientName'] = trimmedRecipient;
+    }
+    if (latitude != null && longitude != null) {
+      payload['latitude'] = latitude;
+      payload['longitude'] = longitude;
+    }
+    if (keepConfirmation) {
+      payload['keepConfirmation'] = true;
+    }
+    if (supplementOnly) {
+      payload['supplementOnly'] = true;
+    }
+
+    final url = Uri.parse('$appBaseUrl/api/orders/$orderId/delivery-proof');
+    try {
+      final res = await http.post(
+        url,
+        headers: _headers(),
+        body: jsonEncode(payload),
+      );
+      if (kDebugMode) {
+        print(
+          '[submitDeliveryProof] status=${res.statusCode} body=${_safeBody(res.body)}',
+        );
+      }
+      if (res.statusCode == 200) {
+        await fetchMyOrders(force: true);
+        _stopLocationUpdates(orderIdIfMatches: orderId);
+        return true;
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[submitDeliveryProof] error=$e');
+      }
+    }
+    return false;
   }
 
   Future<bool> pickupCheckin(String orderId, {String? note}) async {

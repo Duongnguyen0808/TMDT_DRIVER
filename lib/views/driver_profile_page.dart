@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 import '../controllers/auth_controller.dart';
 import '../config/api_config.dart';
 import 'widgets/shipper_appbar.dart';
@@ -16,6 +17,10 @@ class DriverProfilePage extends StatefulWidget {
 class _DriverProfilePageState extends State<DriverProfilePage> {
   Map<String, dynamic>? me;
   Map<String, dynamic>? _application;
+  Map<String, dynamic>? _ratingSummary;
+  List<Map<String, dynamic>> _recentRatings = [];
+  bool _ratingsLoading = false;
+  String? _ratingsError;
   bool loading = false;
   String? error;
 
@@ -31,6 +36,10 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
       error = null;
       me = null;
       _application = null;
+      _ratingSummary = null;
+      _recentRatings = [];
+      _ratingsLoading = false;
+      _ratingsError = null;
     });
     http.Response? lastResponse;
     String? lastException;
@@ -57,6 +66,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
               me = parsed;
               _application = app;
             });
+            _loadRatings();
             return;
           }
         }
@@ -82,6 +92,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                 me = parsed;
                 _application = app;
               });
+              _loadRatings();
               return;
             }
           }
@@ -137,6 +148,70 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
     return null;
   }
 
+  Future<void> _loadRatings() async {
+    final driverId = _resolveDriverId();
+    if (driverId == null) return;
+
+    setState(() {
+      _ratingsLoading = true;
+      _ratingsError = null;
+    });
+
+    try {
+      final auth = Get.find<AuthController>();
+      final token = auth.token;
+      if (token == null) {
+        setState(() {
+          _ratingsError = 'Không xác định được phiên đăng nhập';
+        });
+        return;
+      }
+
+      final headers = {'Authorization': 'Bearer $token'};
+      final url = '$apiBaseUrl/api/rating/Driver/$driverId';
+      final res = await http.get(Uri.parse(url), headers: headers);
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(res.body);
+        final summaryRaw = decoded['summary'];
+        final ratingsRaw = decoded['ratings'];
+        Map<String, dynamic>? summary;
+        if (summaryRaw is Map) {
+          summary = summaryRaw.map((k, v) => MapEntry(k.toString(), v));
+        }
+        final parsedRatings = <Map<String, dynamic>>[];
+        if (ratingsRaw is List) {
+          for (final item in ratingsRaw) {
+            if (item is Map) {
+              parsedRatings.add(item.map((k, v) => MapEntry(k.toString(), v)));
+            }
+          }
+        }
+        setState(() {
+          _ratingSummary = summary;
+          _recentRatings = parsedRatings;
+        });
+        return;
+      }
+
+      final msg =
+          _extractMessage(res.body) ??
+          'Không tải được đánh giá (${res.statusCode})';
+      setState(() {
+        _ratingsError = msg;
+      });
+    } catch (_) {
+      setState(() {
+        _ratingsError = 'Không tải được đánh giá';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _ratingsLoading = false;
+        });
+      }
+    }
+  }
+
   Map<String, dynamic>? _parseDriverProfile(String body) {
     try {
       final decoded = jsonDecode(body);
@@ -160,6 +235,21 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
         }
       }
     } catch (_) {}
+    return null;
+  }
+
+  String? _resolveDriverId() {
+    final driver = me?['driver'];
+    if (driver is Map) {
+      final dynamic id = driver['_id'] ?? driver['id'] ?? driver['driverId'];
+      if (id != null && id.toString().isNotEmpty) {
+        return id.toString();
+      }
+    }
+    final dynamic fallback = me?['_id'] ?? me?['id'];
+    if (fallback != null && fallback.toString().isNotEmpty) {
+      return fallback.toString();
+    }
     return null;
   }
 
@@ -222,6 +312,10 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                   const Divider(),
                   const SizedBox(height: 12),
                   ..._buildDriverDetails(),
+                  const SizedBox(height: 16),
+                  const Divider(),
+                  const SizedBox(height: 12),
+                  _buildRatingSection(),
                   if (docSection.isNotEmpty) ...[
                     const SizedBox(height: 16),
                     const Divider(),
@@ -296,6 +390,146 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
             .toList(),
       ),
     ];
+  }
+
+  Widget _buildRatingSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Đánh giá từ khách hàng',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 12),
+        if (_ratingsLoading)
+          const Center(child: CircularProgressIndicator())
+        else if (_ratingsError != null) ...[
+          Text(_ratingsError!, style: const TextStyle(color: Colors.red)),
+          TextButton(onPressed: _loadRatings, child: const Text('Thử tải lại')),
+        ] else ...[
+          _buildRatingSummaryCard(),
+          const SizedBox(height: 16),
+          if (_recentRatings.isNotEmpty)
+            ..._recentRatings
+                .take(3)
+                .map(
+                  (rating) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _RatingTile(
+                      rating: rating,
+                      dateFormatter: _formatDate,
+                      starBuilder: _buildStars,
+                    ),
+                  ),
+                )
+                .toList()
+          else
+            const Text('Bạn chưa có đánh giá nào'),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildRatingSummaryCard() {
+    final average = _toDouble(_ratingSummary?['average']);
+    final total = _toInt(_ratingSummary?['total']);
+    final breakdown = _ratingSummary?['breakdown'];
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                average != null ? average.toStringAsFixed(1) : '—',
+                style: const TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildStars(average ?? 0),
+                  Text('$total lượt đánh giá'),
+                ],
+              ),
+            ],
+          ),
+          if (breakdown is Map)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: _buildBreakdownChips(breakdown),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Wrap _buildBreakdownChips(Map breakdown) {
+    final chips = <Widget>[];
+    for (var score = 5; score >= 1; score--) {
+      final count = _toInt(breakdown[score.toString()]);
+      chips.add(
+        Chip(
+          avatar: const Icon(Icons.star, color: Colors.amber, size: 16),
+          label: Text('$score★: $count'),
+        ),
+      );
+    }
+    return Wrap(spacing: 8, runSpacing: 8, children: chips);
+  }
+
+  Row _buildStars(double rating) {
+    return Row(
+      children: List.generate(5, (index) {
+        final starPosition = index + 1;
+        IconData icon;
+        if (rating >= starPosition) {
+          icon = Icons.star;
+        } else if (rating + 0.5 >= starPosition) {
+          icon = Icons.star_half;
+        } else {
+          icon = Icons.star_border;
+        }
+        return Icon(icon, color: Colors.amber, size: 18);
+      }),
+    );
+  }
+
+  String _formatDate(String? raw) {
+    if (raw == null || raw.isEmpty) return '';
+    try {
+      final parsed = DateTime.tryParse(raw)?.toLocal();
+      if (parsed == null) return '';
+      return DateFormat('dd/MM/yyyy HH:mm').format(parsed);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  double? _toDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String) {
+      return double.tryParse(value);
+    }
+    return null;
+  }
+
+  int _toInt(dynamic value) {
+    if (value is num) return value.toInt();
+    if (value is String) {
+      return int.tryParse(value) ?? 0;
+    }
+    return 0;
   }
 
   void _showImagePreview(String label, String url) {
@@ -464,6 +698,67 @@ class _DocumentCard extends StatelessWidget {
             Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _RatingTile extends StatelessWidget {
+  const _RatingTile({
+    required this.rating,
+    required this.dateFormatter,
+    required this.starBuilder,
+  });
+
+  final Map<String, dynamic> rating;
+  final String Function(String?) dateFormatter;
+  final Row Function(double) starBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    final user = rating['userId'];
+    final author = user is Map
+        ? (user['username'] ?? user['email'] ?? 'Khách hàng ẩn danh')
+        : (rating['reviewerName'] ?? 'Khách hàng ẩn danh');
+    final score = rating['rating'] is num
+        ? (rating['rating'] as num).toDouble()
+        : double.tryParse(rating['rating']?.toString() ?? '') ?? 0;
+    final comment = rating['comment']?.toString();
+    final createdAt = rating['createdAt']?.toString();
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  author.toString(),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                dateFormatter(createdAt),
+                style: const TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          starBuilder(score),
+          if (comment != null && comment.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(comment),
+          ],
+        ],
       ),
     );
   }

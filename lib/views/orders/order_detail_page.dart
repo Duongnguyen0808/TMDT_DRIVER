@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../controllers/orders_controller.dart';
 import '../widgets/shipper_appbar.dart';
+import 'widgets/delivery_proof_sheet.dart';
 
 class OrderDetailPage extends StatefulWidget {
   final Map<String, dynamic> order;
@@ -44,6 +45,17 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     final status = (order['orderStatus'] ?? '').toString();
     final logisticStatus = (order['logisticStatus'] ?? '').toString();
     final addr = (order['deliveryAddress']?['addressLine1'] ?? '').toString();
+    final customerName =
+        (order['deliveryAddress']?['displayName'] ??
+                order['userId']?['username'] ??
+                order['userId']?['name'] ??
+                'Khách hàng')
+            .toString();
+    final rawCustomerPhone = (order['userId']?['phone'] ?? '').toString();
+    final normalizedCustomerPhone = rawCustomerPhone.replaceAll(
+      RegExp(r'[^0-9+]'),
+      '',
+    );
     final storeTitle = (order['storeId']?['title'] ?? '').toString();
     final orderTotal =
         double.tryParse(order['orderTotal']?.toString() ?? '0') ?? 0;
@@ -71,6 +83,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     final double? storeLng = storeCoords.length > 1
         ? (storeCoords[1] as num).toDouble()
         : null;
+    final issueCard = _buildDeliveryIssueCard(status);
 
     return Scaffold(
       appBar: ShipperAppBar(
@@ -127,6 +140,11 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
             const Divider(height: 24),
+            if (issueCard != null) ...[
+              issueCard,
+              const SizedBox(height: 24),
+              const Divider(height: 24),
+            ],
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -185,6 +203,10 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
                 ),
               ],
             ),
+            if (normalizedCustomerPhone.isNotEmpty) ...[
+              const SizedBox(height: 24),
+              _buildCustomerContactCard(customerName, normalizedCustomerPhone),
+            ],
             const SizedBox(height: 24),
             _buildPickupSection(status),
             const SizedBox(height: 24),
@@ -193,6 +215,362 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
         ),
       ),
     );
+  }
+
+  Widget _buildCustomerContactCard(String name, String phone) {
+    final displayPhone = phone.replaceAll(RegExp(r'[^0-9+]'), '');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Liên hệ khách hàng:',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(displayPhone, style: const TextStyle(color: Colors.grey)),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _callCustomer(displayPhone),
+                        icon: const Icon(Icons.call),
+                        label: const Text('Gọi khách'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () => _messageCustomer(displayPhone),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue.shade600,
+                          foregroundColor: Colors.white,
+                        ),
+                        icon: const Icon(Icons.chat_bubble_outline),
+                        label: const Text('Nhắn tin'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _callCustomer(String phone) async {
+    final uri = Uri(scheme: 'tel', path: phone);
+    final canLaunch = await canLaunchUrl(uri);
+    final launched = canLaunch ? await launchUrl(uri) : false;
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không thể mở ứng dụng gọi điện.')),
+      );
+    }
+  }
+
+  Future<void> _messageCustomer(String phone) async {
+    final uri = Uri(scheme: 'sms', path: phone);
+    final canLaunch = await canLaunchUrl(uri);
+    final launched = canLaunch ? await launchUrl(uri) : false;
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không thể mở ứng dụng nhắn tin.')),
+      );
+    }
+  }
+
+  Widget? _buildDeliveryIssueCard(String driverStatus) {
+    final confirmStatus = (_order['shopDeliveryConfirmStatus'] ?? 'None')
+        .toString();
+    final issueStatus = (_order['deliveryIssueStatus'] ?? 'None').toString();
+    final disputeStatus = (_order['customerDisputeStatus'] ?? 'None')
+        .toString();
+    final deliveryProof = (_order['deliveryProofPhoto'] ?? '').toString();
+    final List<String> proofAlbum = (_order['deliveryProofAlbum'] is List)
+        ? List<String>.from(
+            (_order['deliveryProofAlbum'] as List)
+                .map((e) => e == null ? '' : e.toString())
+                .where((url) => url.isNotEmpty),
+          )
+        : <String>[];
+    final bool needShopAction = confirmStatus == 'Rejected';
+    final bool issueActive = issueStatus != 'None' && issueStatus != 'Resolved';
+    final bool disputeActive = disputeStatus != 'None';
+    if (!needShopAction && !issueActive && !disputeActive) {
+      return null;
+    }
+
+    final Color accent = disputeStatus == 'Pending' || issueStatus == 'Disputed'
+        ? Colors.redAccent
+        : Colors.orange.shade700;
+    final List<Widget> chips = [];
+    if (issueStatus != 'None') {
+      chips.add(
+        _issueChip(
+          icon: Icons.warning_amber_outlined,
+          label: _issueStatusLabel(issueStatus),
+          color: _issueStatusColor(issueStatus),
+        ),
+      );
+    }
+    if (needShopAction || confirmStatus == 'Pending') {
+      chips.add(
+        _issueChip(
+          icon: Icons.fact_check_outlined,
+          label: _shopConfirmLabel(confirmStatus),
+          color: _shopConfirmColor(confirmStatus),
+        ),
+      );
+    }
+    if (disputeStatus != 'None') {
+      chips.add(
+        _issueChip(
+          icon: Icons.report_problem_outlined,
+          label: _disputeStatusLabel(disputeStatus),
+          color: _disputeStatusColor(disputeStatus),
+        ),
+      );
+    }
+
+    final rejectReason = (_order['shopDeliveryRejectReason'] ?? '').toString();
+    final disputeNote = (_order['customerDisputeNote'] ?? '').toString();
+    final issueNote = (_order['deliveryIssueNote'] ?? '').toString();
+    final disputeResolution = (_order['customerDisputeResolution'] ?? '')
+        .toString();
+    final bool canResendProof = driverStatus == 'Delivering';
+    final bool needsProofButton =
+        canResendProof && (deliveryProof.isEmpty || needShopAction);
+    final bool canSendSupplement =
+        canResendProof && (disputeActive || issueStatus == 'Escalated');
+    final bool preserveConfirmation = confirmStatus == 'Confirmed';
+
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.priority_high, color: accent),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Cảnh báo giao hàng',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: accent,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (chips.isNotEmpty)
+              Wrap(spacing: 8, runSpacing: 8, children: chips),
+            if (chips.isNotEmpty) const SizedBox(height: 12),
+            if (needShopAction && rejectReason.isNotEmpty)
+              _issueText(
+                'Shop yêu cầu bổ sung: $rejectReason',
+                color: Colors.red.shade700,
+              ),
+            if (disputeNote.isNotEmpty) _issueText('Khách báo: $disputeNote'),
+            if (issueNote.isNotEmpty)
+              _issueText('Ghi chú hệ thống: $issueNote'),
+            if (disputeResolution.isNotEmpty && disputeStatus != 'Pending')
+              _issueText('Kết quả xử lý: $disputeResolution'),
+            if (proofAlbum.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _ProofAlbumViewer(urls: proofAlbum),
+            ],
+            if (needsProofButton) ...[
+              const SizedBox(height: 12),
+              ElevatedButton.icon(
+                onPressed: _statusUpdating
+                    ? null
+                    : () => _openDeliveryProofSheet(
+                        supplementOnly: false,
+                        preserveConfirmation: preserveConfirmation,
+                      ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                icon: const Icon(Icons.photo_camera_back_outlined),
+                label: Text(
+                  deliveryProof.isEmpty
+                      ? 'CHỤP ẢNH BÀN GIAO'
+                      : 'GỬI LẠI BẰNG CHỨNG',
+                ),
+              ),
+            ],
+            if (canSendSupplement) ...[
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: _statusUpdating
+                    ? null
+                    : () => _openDeliveryProofSheet(
+                        supplementOnly: true,
+                        preserveConfirmation: preserveConfirmation,
+                      ),
+                icon: const Icon(Icons.add_photo_alternate_outlined),
+                label: const Text('BỔ SUNG BẰNG CHỨNG'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _issueChip({
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(.12),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _issueText(String text, {Color? color}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+          color: color ?? Colors.black87,
+        ),
+      ),
+    );
+  }
+
+  String _issueStatusLabel(String status) {
+    switch (status) {
+      case 'Warned':
+        return 'Đã bị nhắc gửi ảnh';
+      case 'Escalated':
+        return 'Bị giám sát escalated';
+      case 'Disputed':
+        return 'Đang tranh chấp';
+      case 'Resolved':
+        return 'Đã xử lý xong';
+      default:
+        return 'Cảnh báo logistics';
+    }
+  }
+
+  Color _issueStatusColor(String status) {
+    switch (status) {
+      case 'Warned':
+        return Colors.orange;
+      case 'Escalated':
+        return Colors.deepOrange;
+      case 'Disputed':
+        return Colors.redAccent;
+      case 'Resolved':
+        return Colors.green;
+      default:
+        return Colors.blueGrey;
+    }
+  }
+
+  String _shopConfirmLabel(String status) {
+    switch (status) {
+      case 'Pending':
+        return 'Shop chưa xác nhận';
+      case 'Rejected':
+        return 'Shop yêu cầu bổ sung';
+      case 'Confirmed':
+        return 'Shop đã xác nhận';
+      default:
+        return 'Trạng thái shop';
+    }
+  }
+
+  Color _shopConfirmColor(String status) {
+    switch (status) {
+      case 'Pending':
+        return Colors.amber.shade800;
+      case 'Rejected':
+        return Colors.redAccent;
+      case 'Confirmed':
+        return Colors.green;
+      default:
+        return Colors.blueGrey;
+    }
+  }
+
+  String _disputeStatusLabel(String status) {
+    switch (status) {
+      case 'Pending':
+        return 'Khách đang khiếu nại';
+      case 'Resolved':
+        return 'Khiếu nại đã xử lý';
+      case 'Rejected':
+        return 'Cửa hàng từ chối khiếu nại';
+      default:
+        return 'Trạng thái khiếu nại';
+    }
+  }
+
+  Color _disputeStatusColor(String status) {
+    switch (status) {
+      case 'Pending':
+        return Colors.redAccent;
+      case 'Resolved':
+        return Colors.green;
+      case 'Rejected':
+        return Colors.blueGrey;
+      default:
+        return Colors.blueGrey;
+    }
   }
 
   Future<void> _refreshOrder() async {
@@ -298,27 +676,43 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     }
   }
 
-  Future<void> _markDelivered() async {
+  Future<void> _openDeliveryProofSheet({
+    bool supplementOnly = false,
+    bool preserveConfirmation = false,
+  }) async {
     if (_statusUpdating) return;
-    setState(() => _statusUpdating = true);
-    final ok = await ctrl.markDelivered(_orderId);
-    if (!mounted) return;
-    setState(() => _statusUpdating = false);
-    if (ok) {
-      Get.snackbar(
-        'Hoàn tất',
-        'Đơn đã giao thành công',
-        snackPosition: SnackPosition.BOTTOM,
-      );
-      Get.back();
-    } else {
-      Get.snackbar(
-        'Không thể cập nhật',
-        'Vui lòng thử lại',
-        snackPosition: SnackPosition.BOTTOM,
-        backgroundColor: Colors.redAccent,
-        colorText: Colors.white,
-      );
+    final deliveryAddress = _order['deliveryAddress'] as Map<String, dynamic>?;
+    final inferredRecipient =
+        (deliveryAddress?['recipientName'] ??
+                deliveryAddress?['contactName'] ??
+                deliveryAddress?['fullName'] ??
+                deliveryAddress?['name'] ??
+                '')
+            .toString();
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return FractionallySizedBox(
+          heightFactor: 0.95,
+          child: DeliveryProofSheet(
+            controller: ctrl,
+            orderId: _orderId,
+            initialRecipient: inferredRecipient.isEmpty
+                ? null
+                : inferredRecipient,
+            supplementOnly: supplementOnly,
+            preserveConfirmation: preserveConfirmation,
+          ),
+        );
+      },
+    );
+    if (result == true) {
+      await _refreshOrder();
     }
   }
 
@@ -499,29 +893,91 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
       );
     }
     if (status == 'Delivering') {
-      widgets.add(
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.green,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 16),
+      final proofPhoto = (_order['deliveryProofPhoto'] ?? '').toString();
+      final confirmStatus = (_order['shopDeliveryConfirmStatus'] ?? 'None')
+          .toString();
+      final rejectReason = (_order['shopDeliveryRejectReason'] ?? '')
+          .toString();
+      final bool proofRejected = confirmStatus == 'Rejected';
+      final bool proofConfirmed = confirmStatus == 'Confirmed';
+      final bool proofPending =
+          !proofConfirmed && !proofRejected && proofPhoto.isNotEmpty;
+
+      if (proofPending) {
+        widgets.add(
+          _infoBanner(
+            'Đã gửi ảnh bàn giao, chờ shop xác nhận.',
+            icon: Icons.hourglass_top,
+            color: Colors.amber.shade100,
           ),
-          onPressed: _statusUpdating ? null : _markDelivered,
-          child: _statusUpdating
-              ? const SizedBox(
-                  height: 20,
-                  width: 20,
-                  child: CircularProgressIndicator(
-                    color: Colors.white,
-                    strokeWidth: 2,
+        );
+      }
+
+      if (proofRejected) {
+        final detail = rejectReason.isNotEmpty
+            ? ': $rejectReason'
+            : ' (chưa có lý do)';
+        widgets.add(
+          _infoBanner(
+            'Shop từ chối bằng chứng$detail. Chụp rõ mặt hàng và khách nhận.',
+            icon: Icons.error_outline,
+            color: Colors.red.shade100,
+          ),
+        );
+      }
+
+      if (proofConfirmed) {
+        widgets.add(
+          _infoBanner(
+            'Shop đã xác nhận bàn giao. Đơn sẽ chuyển sang Hoàn tất sớm.',
+            icon: Icons.verified_outlined,
+            color: Colors.green.shade100,
+          ),
+        );
+        widgets.add(
+          OutlinedButton.icon(
+            onPressed: _statusUpdating
+                ? null
+                : () => _openDeliveryProofSheet(
+                    supplementOnly: true,
+                    preserveConfirmation: true,
                   ),
-                )
-              : const Text(
-                  'ĐÃ GIAO HÀNG (HOÀN TẤT)',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-        ),
-      );
+            icon: const Icon(Icons.add_a_photo_outlined),
+            label: const Text('BỔ SUNG BẰNG CHỨNG (KHÔNG RESET)'),
+          ),
+        );
+      }
+
+      if (!proofConfirmed) {
+        final label = proofPhoto.isEmpty
+            ? 'TẢI ẢNH BÀN GIAO'
+            : proofRejected
+            ? 'GỬI LẠI BẰNG CHỨNG'
+            : 'BỔ SUNG BẰNG CHỨNG';
+        widgets.add(
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: proofRejected ? Colors.redAccent : Colors.green,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+            ),
+            onPressed: _statusUpdating ? null : _openDeliveryProofSheet,
+            child: _statusUpdating
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                  )
+                : Text(
+                    label,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+          ),
+        );
+      }
     }
 
     if (widgets.isEmpty) return const SizedBox.shrink();
@@ -668,6 +1124,84 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
 }
 
 // Removed local formatter; using formatVND
+
+class _ProofAlbumViewer extends StatelessWidget {
+  const _ProofAlbumViewer({required this.urls});
+  final List<String> urls;
+
+  void _openPreview(String url) {
+    if (url.isEmpty) return;
+    Get.dialog(
+      Dialog(
+        child: InteractiveViewer(
+          child: AspectRatio(
+            aspectRatio: 3 / 4,
+            child: Image.network(url, fit: BoxFit.contain),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (urls.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Ảnh đã gửi',
+          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 90,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: urls.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (_, index) => _ProofThumb(
+              url: urls[index],
+              onTap: () => _openPreview(urls[index]),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProofThumb extends StatelessWidget {
+  const _ProofThumb({required this.url, required this.onTap});
+  final String url;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: AspectRatio(
+          aspectRatio: 3 / 4,
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: Colors.grey.shade200,
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Image.network(
+              url,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const Icon(Icons.broken_image),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _LogisticChip extends StatelessWidget {
   const _LogisticChip({required this.status});

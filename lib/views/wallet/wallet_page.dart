@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../controllers/wallet_controller.dart';
 import '../widgets/shipper_appbar.dart';
 import 'wallet_topup_page.dart';
+import '../support/service_center_page.dart';
 
 class WalletPage extends StatefulWidget {
   const WalletPage({super.key});
@@ -20,6 +22,7 @@ class _WalletPageState extends State<WalletPage> {
     symbol: 'đ',
     decimalDigits: 0,
   );
+  static const String _supportHotline = '1900636527';
 
   @override
   void initState() {
@@ -119,6 +122,22 @@ class _WalletPageState extends State<WalletPage> {
     return amount;
   }
 
+  Future<void> _openSupportChat() async {
+    await Get.to(() => const ServiceCenterPage());
+  }
+
+  Future<void> _callSupport() async {
+    final uri = Uri(scheme: 'tel', path: _supportHotline);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+      return;
+    }
+    Get.snackbar(
+      'Không thể gọi',
+      'Vui lòng gọi trực tiếp tới $_supportHotline',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -141,11 +160,13 @@ class _WalletPageState extends State<WalletPage> {
             children: [
               _balanceCard(summary),
               const SizedBox(height: 16),
+              _manualAdjustButtons(),
+              const SizedBox(height: 16),
+              _supportShortcuts(),
+              const SizedBox(height: 16),
               _transactionsCard(
                 summary?.transactions ?? const <Map<String, dynamic>>[],
               ),
-              const SizedBox(height: 16),
-              _manualAdjustButtons(),
               const SizedBox(height: 80),
             ],
           ),
@@ -276,6 +297,43 @@ class _WalletPageState extends State<WalletPage> {
                 onPressed: adjusting ? null : () => _handleQuickAdjust(false),
                 label: Text(adjusting ? 'Đang xử lý...' : 'Rút tiền'),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _supportShortcuts() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Cần hỗ trợ nhanh?',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.chat_bubble_outline),
+                    onPressed: _openSupportChat,
+                    label: const Text('Chat với CSKH'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.phone_in_talk_outlined),
+                    onPressed: _callSupport,
+                    label: Text('Gọi $_supportHotline'),
+                  ),
+                ),
+              ],
             ),
           ],
         ),

@@ -140,6 +140,10 @@ class _OrdersPageState extends State<OrdersPage> {
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
               child: _walletStrip(),
             ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: _alertsPanel(),
+            ),
             SizedBox(
               height: 44,
               child: ListView.separated(
@@ -317,6 +321,198 @@ class _OrdersPageState extends State<OrdersPage> {
         ),
       ),
     );
+  }
+
+  Widget _alertsPanel() {
+    return Obx(() {
+      final proofIssues = ctrl.orders
+          .where(_needsProofReminder)
+          .toList(growable: false);
+      final disputes = ctrl.orders
+          .where(_hasActiveDispute)
+          .toList(growable: false);
+      if (proofIssues.isEmpty && disputes.isEmpty) {
+        return const SizedBox.shrink();
+      }
+
+      return Column(
+        children: [
+          if (proofIssues.isNotEmpty)
+            _alertCard(
+              title: 'Nhắc gửi ảnh bàn giao (${proofIssues.length})',
+              color: Colors.orange,
+              icon: Icons.photo_camera_back_outlined,
+              orders: proofIssues,
+              reasonBuilder: _proofReminderReason,
+            ),
+          if (disputes.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _alertCard(
+              title: 'Đơn đang bị khiếu nại (${disputes.length})',
+              color: Colors.redAccent,
+              icon: Icons.report_gmailerrorred_outlined,
+              orders: disputes,
+              reasonBuilder: _disputeReason,
+            ),
+          ],
+          const SizedBox(height: 8),
+        ],
+      );
+    });
+  }
+
+  Widget _alertCard({
+    required String title,
+    required Color color,
+    required IconData icon,
+    required List<Map<String, dynamic>> orders,
+    required String Function(Map<String, dynamic>) reasonBuilder,
+  }) {
+    final preview = orders.take(3).toList(growable: false);
+    final extra = orders.length - preview.length;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: _alertAccent(color),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final o in preview) ...[
+            _alertRow(order: o, reason: reasonBuilder(o), color: color),
+            const SizedBox(height: 8),
+          ],
+          if (extra > 0)
+            Text(
+              '+$extra đơn khác',
+              style: TextStyle(
+                color: _alertAccent(color),
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _alertRow({
+    required Map<String, dynamic> order,
+    required String reason,
+    required Color color,
+  }) {
+    final id = (order['_id'] ?? '').toString();
+    final shortId = id.length > 6 ? id.substring(id.length - 6) : id;
+    final store = (order['storeId']?['title'] ?? '').toString();
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '#$shortId · $store',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              Text(
+                reason,
+                style: const TextStyle(fontSize: 12, color: Colors.black87),
+              ),
+            ],
+          ),
+        ),
+        TextButton(
+          onPressed: () => _openOrderDetail(order),
+          child: Text('Xem', style: TextStyle(color: _alertAccent(color))),
+        ),
+      ],
+    );
+  }
+
+  Color _alertAccent(Color base) {
+    if (base is MaterialColor) return base.shade700;
+    if (base is MaterialAccentColor) return base.shade700;
+    final hsl = HSLColor.fromColor(base);
+    final adjusted = hsl.withLightness((hsl.lightness * 0.7).clamp(0.0, 1.0));
+    return adjusted.toColor();
+  }
+
+  void _openOrderDetail(Map<String, dynamic> order) {
+    Get.to(() => OrderDetailPage(order: order));
+  }
+
+  bool _needsProofReminder(Map<String, dynamic> order) {
+    final status = (order['orderStatus'] ?? '').toString();
+    final validStatus = status == 'Delivering' || status == 'PickedUp';
+    final proofPhoto = (order['deliveryProofPhoto'] ?? '').toString();
+    final confirmStatus = (order['shopDeliveryConfirmStatus'] ?? 'None')
+        .toString();
+    final issueStatus = (order['deliveryIssueStatus'] ?? 'None').toString();
+    final warned = issueStatus == 'Warned' || issueStatus == 'Escalated';
+    final rejected = confirmStatus == 'Rejected';
+    if (!validStatus) return false;
+    return proofPhoto.isEmpty || warned || rejected;
+  }
+
+  bool _hasActiveDispute(Map<String, dynamic> order) {
+    final dispute = (order['customerDisputeStatus'] ?? 'None').toString();
+    if (dispute == 'Pending') return true;
+    final issueStatus = (order['deliveryIssueStatus'] ?? 'None').toString();
+    return issueStatus == 'Disputed';
+  }
+
+  String _proofReminderReason(Map<String, dynamic> order) {
+    final proofPhoto = (order['deliveryProofPhoto'] ?? '').toString();
+    final confirmStatus = (order['shopDeliveryConfirmStatus'] ?? 'None')
+        .toString();
+    final issueStatus = (order['deliveryIssueStatus'] ?? 'None').toString();
+    if (confirmStatus == 'Rejected') {
+      final reason = (order['shopDeliveryRejectReason'] ?? '').toString();
+      if (reason.isNotEmpty) {
+        return 'Shop yêu cầu chụp lại: $reason';
+      }
+      return 'Shop từ chối ảnh bàn giao, chụp lại ngay.';
+    }
+    if (proofPhoto.isEmpty) {
+      return 'Chưa gửi ảnh bàn giao cho shop.';
+    }
+    if (issueStatus == 'Escalated') {
+      return 'Đơn bị escalated, cần liên hệ shop & bổ sung ảnh.';
+    }
+    if (issueStatus == 'Warned') {
+      return 'Hệ thống nhắc gửi ảnh trước khi bị escalate.';
+    }
+    return 'Cần kiểm tra lại bằng chứng.';
+  }
+
+  String _disputeReason(Map<String, dynamic> order) {
+    final note = (order['customerDisputeNote'] ?? '').toString();
+    if (note.isNotEmpty) {
+      return note;
+    }
+    final issueNote = (order['deliveryIssueNote'] ?? '').toString();
+    if (issueNote.isNotEmpty) {
+      return issueNote;
+    }
+    return 'Khách báo chưa nhận được hàng, cần phối hợp xử lý.';
   }
 
   Widget _walletStrip() {
