@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:http/http.dart' as http;
+
 import '../config/api_config.dart';
+import '../services/push_notification_service.dart';
 
 class AuthController extends GetxController {
   final box = GetStorage();
@@ -19,18 +21,24 @@ class AuthController extends GetxController {
     final primaryUrl = Uri.parse('$apiBaseUrl/login');
     final fallbackUrl = Uri.parse('$apiBaseUrl/api/auth/login');
     late http.Response res;
+    final payload = {'email': emailNorm, 'password': password};
+    final cachedFcm = box.read('fcmToken');
+    if (cachedFcm is String && cachedFcm.isNotEmpty) {
+      payload['fcmToken'] = cachedFcm;
+    }
+
     try {
       res = await http.post(
         primaryUrl,
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'email': emailNorm, 'password': password}),
+        body: jsonEncode(payload),
       );
       if (res.statusCode == 404) {
         // Attempt fallback path automatically
         res = await http.post(
           fallbackUrl,
           headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'email': emailNorm, 'password': password}),
+          body: jsonEncode(payload),
         );
       }
     } catch (e) {
@@ -46,6 +54,7 @@ class AuthController extends GetxController {
             data['userToken'] ?? data['token'] ?? data['accessToken'] ?? '';
         if (t is String && t.isNotEmpty) {
           box.write('token', t);
+          await PushNotificationService.syncTokenWithBackend();
           return true;
         } else {
           Get.snackbar('Thiếu token', 'Phản hồi không có userToken');

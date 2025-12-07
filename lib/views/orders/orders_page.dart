@@ -40,6 +40,13 @@ class _OrdersPageState extends State<OrdersPage> {
     'Đang giao', // Delivering
     'Hoàn tất', // Delivered
   ];
+  final List<IconData> _statusIcons = const [
+    Icons.flash_on_outlined,
+    Icons.inbox_outlined,
+    Icons.storefront_outlined,
+    Icons.local_shipping_outlined,
+    Icons.verified_outlined,
+  ];
   bool _isRefreshing = false;
 
   @override
@@ -74,6 +81,7 @@ class _OrdersPageState extends State<OrdersPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFF4F7FB),
       appBar: ShipperAppBar(
         title: 'Đơn được giao',
         leading: IconButton(
@@ -119,206 +127,379 @@ class _OrdersPageState extends State<OrdersPage> {
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _refreshAll,
-        child: Column(
-          children: [
-            // Search bar
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-              child: TextField(
-                decoration: const InputDecoration(
-                  hintText: 'Tìm kiếm (mã / cửa hàng / địa chỉ)',
-                  prefixIcon: Icon(Icons.search),
-                  border: OutlineInputBorder(),
-                  isDense: true,
+      body: Stack(
+        children: [
+          const Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFFF7F9FF), Color(0xFFE7ECFF)],
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
                 ),
-                onChanged: (v) => setState(() => _search = v.trim()),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-              child: _walletStrip(),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: _alertsPanel(),
-            ),
-            SizedBox(
-              height: 44,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                itemBuilder: (_, i) {
-                  final label = _statusFilters[i];
-                  final selected = _tabIndex == i;
-                  return ChoiceChip(
-                    label: Text(label),
-                    selected: selected,
-                    onSelected: (_) => setState(() => _tabIndex = i),
-                  );
-                },
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemCount: _statusFilters.length,
+          ),
+          SafeArea(
+            child: RefreshIndicator(
+              onRefresh: _refreshAll,
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+                    child: _searchField(),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                    child: _walletStrip(),
+                  ),
+                  Flexible(
+                    fit: FlexFit.loose,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: _alertsPanel(),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: _filtersBar(),
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: Obx(() {
+                      return AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 320),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        child: _buildOrdersBody(),
+                      );
+                    }),
+                  ),
+                ],
               ),
             ),
-            const Divider(height: 1),
-            Expanded(
-              child: Obx(() {
-                if (ctrl.loading.value) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                // Available tab
-                if (_tabIndex == 0) {
-                  if (ctrl.loadingAvailable.value) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  // Ẩn đơn Preparing khỏi danh sách claim
-                  var list = ctrl.availableOrders.where((o) {
-                    final s = (o['orderStatus'] ?? '').toString();
-                    return s != 'Preparing';
-                  }).toList();
-                  if (_search.isNotEmpty) {
-                    final q = _search.toLowerCase();
-                    list = list.where((o) {
-                      final id = (o['_id'] ?? '').toString().toLowerCase();
-                      final store = (o['storeId']?['title'] ?? '')
-                          .toString()
-                          .toLowerCase();
-                      final addr = (o['deliveryAddress']?['addressLine1'] ?? '')
-                          .toString()
-                          .toLowerCase();
-                      return id.contains(q) ||
-                          store.contains(q) ||
-                          addr.contains(q);
-                    }).toList();
-                  }
-                  if (list.isEmpty) {
-                    return const Center(
-                      child: Text('Không có đơn sẵn sàng nhận'),
-                    );
-                  }
-                  final busy = ctrl.hasActiveDelivery;
-                  final activeOrder = ctrl.currentActiveOrder;
-                  final children = <Widget>[];
-                  if (busy) {
-                    children.add(
-                      _activeDeliveryBanner(
-                        orderId: activeOrder?['_id']?.toString(),
-                        orderStatus: activeOrder?['orderStatus']?.toString(),
-                      ),
-                    );
-                    children.add(const SizedBox(height: 12));
-                  }
-                  for (final o in list) {
-                    children.add(
-                      Column(
-                        children: [
-                          OrderCard(
-                            order: o,
-                            onTap: () =>
-                                Get.to(() => OrderDetailPage(order: o)),
-                          ),
-                          const SizedBox(height: 6),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  icon: const Icon(Icons.assignment_turned_in),
-                                  onPressed: busy
-                                      ? null
-                                      : () => _handleClaimOrder(o),
-                                  label: const Text('Nhận đơn'),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    );
-                    children.add(const SizedBox(height: 12));
-                  }
-                  if (children.isNotEmpty) {
-                    children.removeLast();
-                  }
-                  return ListView(
-                    padding: const EdgeInsets.all(12),
-                    children: children,
-                  );
-                }
+          ),
+        ],
+      ),
+    );
+  }
 
-                // Other tabs
-                final List<Map<String, dynamic>> source = ctrl.orders;
-                List<Map<String, dynamic>> filtered;
-                if (_tabIndex == 1) {
-                  filtered = source; // Tất cả
-                } else {
-                  final statusLabel = _statusFilters[_tabIndex];
-                  String? wanted;
-                  bool waitingForShop = false;
-                  switch (statusLabel) {
-                    case 'Chờ shop':
-                      waitingForShop = true;
-                      break;
-                    case 'Đang giao':
-                      wanted = 'Delivering';
-                      break;
-                    case 'Hoàn tất':
-                      wanted = 'Delivered';
-                      break;
-                  }
-
-                  if (waitingForShop) {
-                    filtered = source.where((o) {
-                      final status = (o['orderStatus'] ?? '').toString();
-                      final logistic = (o['logisticStatus'] ?? '').toString();
-                      return status == 'WaitingShipper' ||
-                          logistic == 'SellerPending';
-                    }).toList();
-                  } else if (wanted != null) {
-                    filtered = source
-                        .where((o) => (o['orderStatus'] ?? '') == wanted)
-                        .toList();
-                  } else {
-                    filtered = source;
-                  }
-                }
-                if (_search.isNotEmpty) {
-                  final q = _search.toLowerCase();
-                  filtered = filtered.where((o) {
-                    final id = (o['_id'] ?? '').toString().toLowerCase();
-                    final store = (o['storeId']?['title'] ?? '')
-                        .toString()
-                        .toLowerCase();
-                    final addr = (o['deliveryAddress']?['addressLine1'] ?? '')
-                        .toString()
-                        .toLowerCase();
-                    return id.contains(q) ||
-                        store.contains(q) ||
-                        addr.contains(q);
-                  }).toList();
-                }
-                if (filtered.isEmpty) {
-                  return const Center(
-                    child: Text('Không có đơn theo trạng thái'),
-                  );
-                }
-                return ListView.separated(
-                  padding: const EdgeInsets.all(12),
-                  itemBuilder: (_, i) {
-                    final o = filtered[i];
-                    return OrderCard(
-                      order: o,
-                      onTap: () => Get.to(() => OrderDetailPage(order: o)),
-                    );
-                  },
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemCount: filtered.length,
-                );
-              }),
-            ),
-          ],
+  Widget _searchField() {
+    return _surface(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: TextField(
+        decoration: InputDecoration(
+          hintText: 'Tìm kiếm (mã / cửa hàng / địa chỉ)',
+          prefixIcon: Icon(
+            Icons.search_rounded,
+            color: Colors.blueGrey.shade400,
+          ),
+          suffixIcon: _search.isNotEmpty
+              ? IconButton(
+                  tooltip: 'Xóa',
+                  icon: const Icon(Icons.close_rounded),
+                  onPressed: () => setState(() => _search = ''),
+                )
+              : null,
+          border: InputBorder.none,
         ),
+        onChanged: (v) => setState(() => _search = v.trim()),
+      ),
+    );
+  }
+
+  Widget _filtersBar() {
+    return SizedBox(
+      height: 52,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemBuilder: (_, index) {
+          final label = _statusFilters[index];
+          final selected = _tabIndex == index;
+          return GestureDetector(
+            onTap: () => setState(() => _tabIndex = index),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+              decoration: BoxDecoration(
+                gradient: selected
+                    ? const LinearGradient(
+                        colors: [Color(0xFF4C6EF5), Color(0xFF82B1FF)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      )
+                    : null,
+                color: selected ? null : Colors.white.withOpacity(.75),
+                borderRadius: BorderRadius.circular(26),
+                border: Border.all(
+                  color: selected
+                      ? Colors.transparent
+                      : Colors.white.withOpacity(.8),
+                ),
+                boxShadow: selected
+                    ? [
+                        BoxShadow(
+                          color: Colors.blueAccent.withOpacity(.25),
+                          blurRadius: 14,
+                          offset: const Offset(0, 6),
+                        ),
+                      ]
+                    : const [],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _filterIcon(index),
+                    size: 18,
+                    color: selected ? Colors.white : const Color(0xFF4C5D73),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: selected ? Colors.white : const Color(0xFF1F2533),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemCount: _statusFilters.length,
+      ),
+    );
+  }
+
+  IconData _filterIcon(int index) {
+    if (index >= 0 && index < _statusIcons.length) {
+      return _statusIcons[index];
+    }
+    return Icons.layers_outlined;
+  }
+
+  Widget _buildOrdersBody() {
+    if (ctrl.loading.value) {
+      return const Center(
+        key: ValueKey('orders-loading'),
+        child: CircularProgressIndicator(),
+      );
+    }
+
+    if (_tabIndex == 0) {
+      if (ctrl.loadingAvailable.value) {
+        return const Center(
+          key: ValueKey('available-loading'),
+          child: CircularProgressIndicator(),
+        );
+      }
+      var list = ctrl.availableOrders.where((o) {
+        final status = (o['orderStatus'] ?? '').toString();
+        return status != 'Preparing';
+      }).toList();
+      if (_search.isNotEmpty) {
+        final q = _search.toLowerCase();
+        list = list.where((o) {
+          final id = (o['_id'] ?? '').toString().toLowerCase();
+          final store = (o['storeId']?['title'] ?? '').toString().toLowerCase();
+          final addr = (o['deliveryAddress']?['addressLine1'] ?? '')
+              .toString()
+              .toLowerCase();
+          return id.contains(q) || store.contains(q) || addr.contains(q);
+        }).toList();
+      }
+      if (list.isEmpty) {
+        return const Center(
+          key: ValueKey('available-empty'),
+          child: Text('Không có đơn sẵn sàng nhận'),
+        );
+      }
+      final busy = ctrl.hasActiveDelivery;
+      final activeOrder = ctrl.currentActiveOrder;
+      final children = <Widget>[];
+      if (busy) {
+        children.add(
+          _surface(
+            child: _activeDeliveryBanner(
+              orderId: activeOrder?['_id']?.toString(),
+              orderStatus: activeOrder?['orderStatus']?.toString(),
+            ),
+          ),
+        );
+        children.add(const SizedBox(height: 14));
+      }
+      for (final o in list) {
+        children.add(
+          _surface(
+            padding: const EdgeInsets.all(0),
+            child: Column(
+              children: [
+                OrderCard(
+                  order: o,
+                  onTap: () => Get.to(() => OrderDetailPage(order: o)),
+                ),
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          icon: const Icon(Icons.assignment_turned_in),
+                          onPressed: busy ? null : () => _handleClaimOrder(o),
+                          label: const Text('Nhận đơn'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+        children.add(const SizedBox(height: 14));
+      }
+      if (children.isNotEmpty) {
+        children.removeLast();
+      }
+      return ListView(
+        key: ValueKey(
+          'available-${list.length}-${_search}-${busy ? 'busy' : 'idle'}',
+        ),
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+        physics: const BouncingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics(),
+        ),
+        children: children,
+      );
+    }
+
+    final List<Map<String, dynamic>> source = ctrl.orders;
+    List<Map<String, dynamic>> filtered;
+    if (_tabIndex == 1) {
+      filtered = source;
+    } else {
+      final statusLabel = _statusFilters[_tabIndex];
+      String? wanted;
+      bool waitingForShop = false;
+      switch (statusLabel) {
+        case 'Chờ shop':
+          waitingForShop = true;
+          break;
+        case 'Đang giao':
+          wanted = 'Delivering';
+          break;
+        case 'Hoàn tất':
+          wanted = 'Delivered';
+          break;
+      }
+      if (waitingForShop) {
+        filtered = source.where((o) {
+          final status = (o['orderStatus'] ?? '').toString();
+          final logistic = (o['logisticStatus'] ?? '').toString();
+          return status == 'WaitingShipper' || logistic == 'SellerPending';
+        }).toList();
+      } else if (wanted != null) {
+        filtered = source
+            .where((o) => (o['orderStatus'] ?? '') == wanted)
+            .toList();
+      } else {
+        filtered = source;
+      }
+    }
+    if (_search.isNotEmpty) {
+      final q = _search.toLowerCase();
+      filtered = filtered.where((o) {
+        final id = (o['_id'] ?? '').toString().toLowerCase();
+        final store = (o['storeId']?['title'] ?? '').toString().toLowerCase();
+        final addr = (o['deliveryAddress']?['addressLine1'] ?? '')
+            .toString()
+            .toLowerCase();
+        return id.contains(q) || store.contains(q) || addr.contains(q);
+      }).toList();
+    }
+    if (filtered.isEmpty) {
+      return const Center(
+        key: ValueKey('other-empty'),
+        child: Text('Không có đơn theo trạng thái'),
+      );
+    }
+    return ListView.separated(
+      key: ValueKey('tab-$_tabIndex-${filtered.length}-${_search}'),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+      physics: const BouncingScrollPhysics(
+        parent: AlwaysScrollableScrollPhysics(),
+      ),
+      itemBuilder: (_, i) {
+        final o = filtered[i];
+        return _surface(
+          padding: const EdgeInsets.all(0),
+          child: OrderCard(
+            order: o,
+            onTap: () => Get.to(() => OrderDetailPage(order: o)),
+          ),
+        );
+      },
+      separatorBuilder: (_, __) => const SizedBox(height: 14),
+      itemCount: filtered.length,
+    );
+  }
+
+  Widget _surface({
+    Key? key,
+    required Widget child,
+    EdgeInsets padding = const EdgeInsets.all(16),
+    Color color = Colors.white,
+    double radius = 20,
+  }) {
+    return Container(
+      key: key,
+      width: double.infinity,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: color.withOpacity(.95),
+        borderRadius: BorderRadius.circular(radius),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(.05),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+        border: Border.all(color: Colors.white.withOpacity(.35)),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _surfaceButton({
+    Key? key,
+    required Widget child,
+    VoidCallback? onTap,
+    EdgeInsets padding = const EdgeInsets.all(16),
+    Color color = Colors.white,
+    double radius = 20,
+  }) {
+    final card = _surface(
+      key: key,
+      child: child,
+      padding: padding,
+      color: color,
+      radius: radius,
+    );
+    if (onTap == null) return card;
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(radius),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(radius),
+        onTap: onTap,
+        child: card,
       ),
     );
   }
@@ -332,31 +513,52 @@ class _OrdersPageState extends State<OrdersPage> {
           .where(_hasActiveDispute)
           .toList(growable: false);
       if (proofIssues.isEmpty && disputes.isEmpty) {
-        return const SizedBox.shrink();
+        return const AnimatedSwitcher(
+          duration: Duration(milliseconds: 250),
+          child: SizedBox.shrink(key: ValueKey('alerts-empty')),
+        );
       }
 
-      return Column(
-        children: [
-          if (proofIssues.isNotEmpty)
-            _alertCard(
-              title: 'Nhắc gửi ảnh bàn giao (${proofIssues.length})',
-              color: Colors.orange,
-              icon: Icons.photo_camera_back_outlined,
-              orders: proofIssues,
-              reasonBuilder: _proofReminderReason,
+      return AnimatedSwitcher(
+        duration: const Duration(milliseconds: 250),
+        child: ConstrainedBox(
+          // Prevent the alerts column from pushing the rest of the layout off screen.
+          constraints: const BoxConstraints(maxHeight: 200),
+          child: Scrollbar(
+            thumbVisibility: false,
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: _surface(
+                key: ValueKey(
+                  'alerts-${proofIssues.length}-${disputes.length}',
+                ),
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    if (proofIssues.isNotEmpty)
+                      _alertCard(
+                        title: 'Nhắc gửi ảnh bàn giao (${proofIssues.length})',
+                        color: Colors.orange,
+                        icon: Icons.photo_camera_back_outlined,
+                        orders: proofIssues,
+                        reasonBuilder: _proofReminderReason,
+                      ),
+                    if (disputes.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      _alertCard(
+                        title: 'Đơn đang bị khiếu nại (${disputes.length})',
+                        color: Colors.redAccent,
+                        icon: Icons.report_gmailerrorred_outlined,
+                        orders: disputes,
+                        reasonBuilder: _disputeReason,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
-          if (disputes.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            _alertCard(
-              title: 'Đơn đang bị khiếu nại (${disputes.length})',
-              color: Colors.redAccent,
-              icon: Icons.report_gmailerrorred_outlined,
-              orders: disputes,
-              reasonBuilder: _disputeReason,
-            ),
-          ],
-          const SizedBox(height: 8),
-        ],
+          ),
+        ),
       );
     });
   }
@@ -523,56 +725,49 @@ class _OrdersPageState extends State<OrdersPage> {
       final balanceText = summary != null
           ? _currency.format(summary.balance.toDouble())
           : (loading ? 'Đang tải...' : 'Chưa có dữ liệu');
-      return InkWell(
-        borderRadius: BorderRadius.circular(12),
+      return _surfaceButton(
         onTap: _openWalletPage,
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.green.shade50,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.green.shade100),
-          ),
-          child: Row(
-            children: [
-              const CircleAvatar(
-                backgroundColor: Colors.white,
-                child: Icon(
-                  Icons.account_balance_wallet_outlined,
-                  color: Colors.green,
-                ),
+        color: Colors.green.shade50,
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            const CircleAvatar(
+              backgroundColor: Colors.white,
+              child: Icon(
+                Icons.account_balance_wallet_outlined,
+                color: Colors.green,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Ví tài xế',
-                      style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Ví tài xế',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  Text(
+                    balanceText,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green,
                     ),
+                  ),
+                  if (!loading && summary?.lastTopupAt != null)
                     Text(
-                      balanceText,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green,
-                      ),
+                      'Nạp gần nhất: ' + _formatDate(summary!.lastTopupAt!),
+                      style: TextStyle(color: Colors.grey[600]),
                     ),
-                    if (!loading && summary?.lastTopupAt != null)
-                      Text(
-                        'Nạp gần nhất: ' + _formatDate(summary!.lastTopupAt!),
-                        style: TextStyle(color: Colors.grey[600]),
-                      ),
-                    if (error != null)
-                      Text(error, style: const TextStyle(color: Colors.red)),
-                  ],
-                ),
+                  if (error != null)
+                    Text(error, style: const TextStyle(color: Colors.red)),
+                ],
               ),
-              const SizedBox(width: 8),
-              const Icon(Icons.chevron_right),
-            ],
-          ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right),
+          ],
         ),
       );
     });
