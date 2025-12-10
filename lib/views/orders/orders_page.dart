@@ -143,39 +143,48 @@ class _OrdersPageState extends State<OrdersPage> {
           SafeArea(
             child: RefreshIndicator(
               onRefresh: _refreshAll,
-              child: Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
-                    child: _searchField(),
+              child: CustomScrollView(
+                physics: const BouncingScrollPhysics(
+                  parent: AlwaysScrollableScrollPhysics(),
+                ),
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+                      child: _searchField(),
+                    ),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                    child: _walletStrip(),
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                      child: _walletStrip(),
+                    ),
                   ),
-                  Flexible(
-                    fit: FlexFit.loose,
+                  SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: _alertsPanel(),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: _filtersBar(),
+                  const SliverToBoxAdapter(child: SizedBox(height: 8)),
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: _filtersBar(),
+                    ),
                   ),
-                  const SizedBox(height: 8),
-                  Expanded(
+                  const SliverToBoxAdapter(child: SizedBox(height: 8)),
+                  SliverToBoxAdapter(
                     child: Obx(() {
                       return AnimatedSwitcher(
                         duration: const Duration(milliseconds: 320),
                         switchInCurve: Curves.easeOutCubic,
                         switchOutCurve: Curves.easeInCubic,
-                        child: _buildOrdersBody(),
+                        child: _buildOrdersBody(embedded: true),
                       );
                     }),
                   ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 24)),
                 ],
               ),
             ),
@@ -282,7 +291,7 @@ class _OrdersPageState extends State<OrdersPage> {
     return Icons.layers_outlined;
   }
 
-  Widget _buildOrdersBody() {
+  Widget _buildOrdersBody({bool embedded = false}) {
     if (ctrl.loading.value) {
       return const Center(
         key: ValueKey('orders-loading'),
@@ -371,9 +380,12 @@ class _OrdersPageState extends State<OrdersPage> {
           'available-${list.length}-${_search}-${busy ? 'busy' : 'idle'}',
         ),
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-        physics: const BouncingScrollPhysics(
-          parent: AlwaysScrollableScrollPhysics(),
-        ),
+        physics: embedded
+            ? const NeverScrollableScrollPhysics()
+            : const BouncingScrollPhysics(
+                parent: AlwaysScrollableScrollPhysics(),
+              ),
+        shrinkWrap: embedded,
         children: children,
       );
     }
@@ -431,9 +443,12 @@ class _OrdersPageState extends State<OrdersPage> {
     return ListView.separated(
       key: ValueKey('tab-$_tabIndex-${filtered.length}-${_search}'),
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-      physics: const BouncingScrollPhysics(
-        parent: AlwaysScrollableScrollPhysics(),
-      ),
+      physics: embedded
+          ? const NeverScrollableScrollPhysics()
+          : const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
+      shrinkWrap: embedded,
       itemBuilder: (_, i) {
         final o = filtered[i];
         return _surface(

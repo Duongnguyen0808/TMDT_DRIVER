@@ -11,12 +11,17 @@ import 'services/push_notification_service.dart';
 import 'views/login_page.dart';
 import 'views/orders/orders_page.dart';
 
+bool _backgroundHandlerRegistered = false;
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  FirebaseMessaging.onBackgroundMessage(
-    shipperFirebaseMessagingBackgroundHandler,
-  );
+  if (!_backgroundHandlerRegistered) {
+    FirebaseMessaging.onBackgroundMessage(
+      shipperFirebaseMessagingBackgroundHandler,
+    );
+    _backgroundHandlerRegistered = true;
+  }
   await GetStorage.init();
   await PushNotificationService.init();
   // Đăng ký AuthController sớm để mọi màn hình (kể cả khi bỏ qua login) đều có thể dùng
